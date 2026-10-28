@@ -30,7 +30,7 @@ from checker import CHECKER_VERSION, Context, Limits, ToolMissing, self_check
 from checker import compare as checker_compare
 from checker.equivalence import canonical, equivalent, group_key, minimal_conflict, unsatisfiable
 from checker.selfcheck import example_checks
-from cv_clang import ClangError, read_implementation, read_interface, transitive_callees
+from cv_clang import ClangError, read_implementation, read_interface
 from cv_store import Store, file_digest
 
 HERE = Path(__file__).resolve().parent
@@ -158,7 +158,8 @@ def _norm(text: str) -> str:
 
 def _manifest_names(project: Path) -> list[str]:
     folder = project / CV / "manifests"
-    return sorted(p.name for p in folder.glob("*.json")) if folder.is_dir() else []
+    names = [p.name for p in folder.glob("*.json")] if folder.is_dir() else []
+    return sorted(names, key=lambda n: [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", n)])
 
 
 def _headers_block(snapshot: dict[str, Any]) -> str:
@@ -231,6 +232,9 @@ def _read_interface(project: Path, config: dict[str, Any]) -> dict[str, Any]:
     decl_path = project / CV / "interface.json"
     decl = P.validate_interface(json.loads(decl_path.read_text(encoding="utf-8")))
     snapshot = read_interface(project, decl["headers"], decl["include_dirs"], list(config["cflags"]))
+    if snapshot["definitions"]:
+        # The generator reads the headers: a function body there is implementation it would see (约束 3).
+        raise P.ProtocolError(f"头文件里有函数体 {snapshot['definitions']}：接口只能含声明与类型定义")
     digests = {h: file_digest(project / h) for h in decl["headers"]}
     return {"decl": decl, "decl_digest": file_digest(decl_path), "header_digests": digests, "snapshot": snapshot}
 
@@ -356,8 +360,9 @@ def generation_prompt(state: dict[str, Any], source: str) -> str:
     requests = []
     for item_id in work["items"]:
         request = {"item": item_id, "text": items[item_id]["text"], "segments": work["segments"][item_id]}
-        if source == "B":  # 两个来源换输入: A 只读条目，B 读条目加示例
+        if source == "B":  # 两个来源换输入: A 只读条目，B 读条目加示例与其余条目（全局约束）
             request["examples"] = items[item_id]["examples"]
+            request["other_items"] = [i["text"] for i in items.values() if i["id"] != item_id]
         requests.append(request)
     return _prompt(
         "generate.md",
@@ -408,7 +413,8 @@ def _parse_artifacts(answer: str | None, source: str, work: dict[str, Any]) -> t
                     item=item,
                     segment=seg_id,
                     span=segment["span"],
-                    functions=[f for f in entry.get("functions", segment["functions"]) if isinstance(f, str)],
+                    functions=[f for f in entry.get("functions") or [] if f in segment["functions"]]
+                    or segment["functions"],
                     form=form,
                     kind=entry.get("kind"),
                     reading=str(entry.get("reading", "")),
@@ -494,6 +500,8 @@ def plan_check(state: dict[str, Any], answer_a: str | None, answer_b: str | None
             key = f"{item_id}.{segment['id']}"
             mine = [a for a in arts_a + arts_b if a["item"] == item_id and a["segment"] == segment["id"]]
             reasons = [r for r in (unc_a.get((item_id, segment["id"])), unc_b.get((item_id, segment["id"]))) if r]
+            if not segment["functions"]:  # nothing to aggregate the result under (算法1 第22-25行)
+                mine, reasons = [], ["这段要求没有涉及头文件中声明的接口函数", *reasons]
             pairs: list[dict[str, Any]] = []
             readings = _dedupe(ctx, _group_readings(mine), pairs)
             removed = []
@@ -516,8 +524,9 @@ def plan_check(state: dict[str, Any], answer_a: str | None, answer_b: str | None
                     results[artifact["id"]] = self_check(ctx, artifact, examples)
                     if not results[artifact["id"]]["ok"]:
                         rewrite[artifact["source"]].append(
-                            {"artifact": artifact, "reason": results[artifact["id"]]["reason"]}
-                        )
+                            {"artifact": artifact, "reason": results[artifact["id"]]["reason"],
+                             "checks": results[artifact["id"]]["checks"]}
+                        )  # fmt: skip
             work["seg_state"][key] = {
                 "readings": readings,
                 "selfcheck": results,
@@ -535,12 +544,24 @@ def rewrite_prompt(state: dict[str, Any], source: str) -> str:
     store = _store(state)
     work = store.load("plan_work", {})
     interface = store.load("interface", {})
-    failed = [
-        {"item": r["artifact"]["item"], "segment": r["artifact"]["segment"], "reading": r["artifact"]["reading"],
-         "form": r["artifact"]["form"], "kind": r["artifact"]["kind"], "functions": r["artifact"]["functions"],
-         **r["artifact"]["content"], "selfcheck_failure": r["reason"]}
-        for r in work["rewrite"][source]
-    ]  # fmt: skip
+    items = _items_by_id(store.load("requirements", {}))
+    failed = []
+    for r in work["rewrite"][source]:
+        artifact, reason = r["artifact"], r["reason"]
+        item = items[artifact["item"]]
+        if source == "A":  # A never reads the examples, not even through a failure reason
+            failed_checks = [c for c in r.get("checks", []) if c["ok"] is False]
+            parts = [c["detail"] for c in failed_checks if c["check"] != "example"]
+            if any(c["check"] == "example" for c in failed_checks):
+                parts.append("与条目的某个示例矛盾")
+            reason = "；".join(parts) or reason
+        entry = {"item": artifact["item"], "requirement": item["text"], "segment": artifact["segment"],
+                 "span": artifact["span"], "reading": artifact["reading"], "form": artifact["form"],
+                 "kind": artifact["kind"], "functions": artifact["functions"], **artifact["content"],
+                 "selfcheck_failure": reason}  # fmt: skip
+        if source == "B":
+            entry["examples"] = item["examples"]
+        failed.append(entry)
     return _prompt(
         "rewrite.md",
         failed=json.dumps(failed, ensure_ascii=False, indent=2),
@@ -612,7 +633,7 @@ def plan_freeze(state: dict[str, Any], answer_a: str | None, answer_b: str | Non
             if seg.get("rewritten") and len(readings) >= 2:  # a rewrite can make two readings equal
                 readings = _dedupe(ctx, readings, seg["pairs"])
             segs.append(_segment_record(segment, readings, seg))
-        if not _sources_differ(config, items[item_id]):
+        if not _sources_differ(config, items[item_id], item_set):
             for record in segs:
                 record["notes"].append(SAME_SOURCE_NOTE)
         plan["items"][item_id] = {"item": item_id, "segments": segs, "examples": work["examples"].get(item_id, [])}
@@ -631,14 +652,15 @@ def plan_freeze(state: dict[str, Any], answer_a: str | None, answer_b: str | Non
 
 
 SAME_SOURCE_NOTE = (
-    "两个来源用的是同一个模型，而条目没有示例，两者的输入也相同：来源之间没有差异，"
+    "两个来源用的是同一个模型，而条目既没有示例、也没有其他条目，两者的输入也相同：来源之间没有差异，"
     "约束 3（不和主任务犯同一种错）得不到来源差异的支持。请在 config.json 中为 generator_b_model 配置另一个模型"
 )
 
 
-def _sources_differ(config: dict[str, Any], item: dict[str, Any]) -> bool:
-    """两个来源至少换模型或换输入 (§3 流程 3): B reads the examples, so examples make the inputs differ."""
-    return config["generator_a_model"] != config["generator_b_model"] or bool(item["examples"])
+def _sources_differ(config: dict[str, Any], item: dict[str, Any], item_set: dict[str, Any]) -> bool:
+    """两个来源至少换模型或换输入 (§3 流程 3): B also reads the examples and the other items."""
+    other_items = len(item_set["items"]) > 1
+    return config["generator_a_model"] != config["generator_b_model"] or bool(item["examples"]) or other_items
 
 
 def _uncovered_item(item: dict[str, Any], reason: str) -> dict[str, Any]:
@@ -817,8 +839,18 @@ def _decide(state: dict[str, Any], signal: str, *, feedback: str = "", report: d
     return dict(state, signal=v["signal"], feedback=v["feedback"], report=v["report"])
 
 
-def verify(state: dict[str, Any]) -> dict[str, Any]:
-    """等待 and 校验: a new completion declaration, intact artifacts, an unchanged interface."""
+C_SOURCES = (".c",)
+UNSUPPORTED_SOURCES = (".cc", ".cpp", ".cxx", ".c++", ".m", ".mm")
+
+
+def verify(state: dict[str, Any], *, require_declaration: bool = False) -> dict[str, Any]:
+    """等待 and 校验: a new completion declaration, intact artifacts, an unchanged interface.
+
+    ``require_declaration``: in the workflow the judge runs once the main agent has stopped, so a
+    stop without a new declaration is not "not a completion" (算法1 第14行 is for a harness that
+    fires after every reply) but a completion without a declaration: it is sent back, with the
+    format, instead of being passed unchecked.
+    """
     store = _store(state)
     history = store.load("history", {"rounds": []})
     round_no = max(state.get("round", 0), len(history["rounds"])) + 1
@@ -826,10 +858,18 @@ def verify(state: dict[str, Any]) -> dict[str, Any]:
     seen = set(store.load("seen_manifests", []))
     names = _manifest_names(store.project)
     new = [n for n in names if n not in seen]
+    item_set = store.load("requirements", {})
     if not new:  # 算法1 第14行
+        if require_declaration and item_set["items"]:
+            message = _prompt("main_manifest_error.md", error="没有写新的完成清单", cv=CV, set_id=item_set["id"])
+            return _decide(
+                state,
+                P.SIGNAL_BLOCK,
+                feedback=message,
+                report=_bare_report(store, state, "主 agent 停止时没有作出完成声明"),
+            )
         return _decide(state, P.SIGNAL_PASS, report=_bare_report(store, state, "没有新的完成声明：未进行比对"))
     store.save("seen_manifests", sorted(seen | set(new)))
-    item_set = store.load("requirements", {})
     if not item_set["items"]:  # 算法1 第15行
         return _decide(state, P.SIGNAL_PASS, report=_bare_report(store, state, "无可检查的需求"))
     latest = store.project / CV / "manifests" / new[-1]
@@ -843,8 +883,26 @@ def verify(state: dict[str, Any]) -> dict[str, Any]:
         return _decide(
             state, P.SIGNAL_BLOCK, feedback=message, report=_bare_report(store, state, f"完成声明无效：{exc}")
         )
+    unsupported = [f for f in manifest["files"] if f.lower().endswith(UNSUPPORTED_SOURCES)]
+    if unsupported:
+        reason = f"交付含有 checker 不支持的源文件 {unsupported}：本插件只检查 C 实现，这次交付无法被交叉验证"
+        return _decide(state, P.SIGNAL_REJECT, feedback=reason, report=_bare_report(store, state, reason))
     state["manifest"] = manifest
     frozen = store.load("frozen", {"artifacts": {}, "interface": None})
+    if frozen.get("interface") is None:
+        # 接口须在实现开始前确定 (§3 协议 row 2). Without one nothing was planned: the requirements would all
+        # stay uncovered and pass unchecked. A declaration written now is planned before any comparison.
+        try:
+            interface = _read_interface(store.project, store.load("config", DEFAULT_CONFIG))
+        except (OSError, ValueError, ClangError, ToolMissing) as exc:
+            message = _prompt("main_interface_error.md", error=str(exc), cv=CV)
+            return _decide(
+                state, P.SIGNAL_BLOCK, feedback=message, report=_bare_report(store, state, f"没有可用的接口：{exc}")
+            )
+        store.save("interface", interface)
+        state["replan_items"] = [item["id"] for item in item_set["items"]]
+        state["notes"] = [*state.get("notes", []), "接口在实现之后才声明：全部条目在比对前重新计划"]
+        return state
     changed = []
     for rel, expected in sorted(frozen["artifacts"].items()):  # 算法1 第16行
         path = store.project / rel
@@ -894,21 +952,30 @@ def _affected_items(store: Store, frozen: dict[str, Any]) -> list[str]:
     return sorted(affected)
 
 
-def _compare_key(artifact: dict[str, Any], impl: dict[str, Any], frozen: dict[str, Any], config: dict) -> str:
-    # 比对结果的缓存键: 计划阶段的键之外，加上被检查函数及其调用的函数的函数体，以及 checker 的版本与配置
-    functions = impl["functions"]
-    involved = transitive_callees(functions, artifact["functions"])
-    if artifact.get("kind") == "P4":
-        involved = sorted(functions)  # a structural constraint is about every function
+def _compare_key(artifact: dict[str, Any], delivered: dict[str, str], frozen: dict[str, Any], config: dict) -> str:
+    """比对结果的缓存键 (§3 集成).
+
+    The design names the plan key plus the bodies of the checked function and of the functions it
+    calls, plus the checker's version and configuration. A harness may call interface functions the
+    artifact does not list, and globals, macros and initialisers are not function bodies, so this key
+    takes every delivered file whole: a superset of the design's key, which can only make the cache
+    hit less often, never return a result for code it was not computed on.
+    """
     return P.digest(
         {
             "artifact": artifact,
-            "bodies": {n: functions[n]["body"] for n in involved},
+            "delivered": delivered,
             "interface": frozen.get("interface"),
             "checker": CHECKER_VERSION,
             "limits": Limits.from_config(config).describe(),
         }
     )
+
+
+def _code_errors(text: str, workdir: Path) -> str:
+    """Compiler messages about the delivered code only: lines about generated files would quote artifacts."""
+    kept = [line for line in text.splitlines() if str(workdir) not in line]
+    return "\n".join(kept[:40])
 
 
 def compare(state: dict[str, Any]) -> dict[str, Any]:
@@ -922,7 +989,12 @@ def compare(state: dict[str, Any]) -> dict[str, Any]:
     item_set = store.load("requirements", {})
     frozen = store.load("frozen", {"artifacts": {}, "interface": None})
     manifest = state["manifest"]
-    impl_files = [f for f in manifest["files"] if f.endswith((".c", ".cc", ".cpp", ".cxx"))]
+    impl_files = [f for f in manifest["files"] if f.endswith(C_SOURCES)]
+    delivered = {
+        f: (store.project / f).read_text(encoding="utf-8", errors="replace")
+        for f in sorted({*manifest["files"], *((interface or {}).get("decl", {}).get("headers", []))})
+        if (store.project / f).is_file()
+    }
     results: dict[str, dict[str, Any]] = {}
     impl: dict[str, Any] = {"functions": {}}
     impl_error = ""
@@ -937,8 +1009,12 @@ def compare(state: dict[str, Any]) -> dict[str, Any]:
                 list(config["cflags"]),
                 interface["snapshot"],
             )
-        except (ClangError, ToolMissing) as exc:
-            impl_error = f"实现无法解析：{exc}"
+        except ClangError as exc:  # the delivered code does not compile: that is the code's failure
+            impl_error = "实现无法编译：\n" + _code_errors(str(exc), ctx.workdir)
+        except ToolMissing as exc:
+            impl_error = ""
+            results = {a["id"]: P.check_result(P.RESULT_UNKNOWN, reason=str(exc)) for a in _all_artifacts(plan)}
+            return _judge(state, store, config, plan, item_set, results)
         for record in plan["items"].values():
             for seg in record["segments"]:
                 if seg["status"] not in (P.SEG_DETERMINED, P.SEG_AMBIGUOUS):
@@ -946,19 +1022,36 @@ def compare(state: dict[str, Any]) -> dict[str, Any]:
                 for artifact in _segment_artifacts(seg):
                     on_disk = json.loads(_artifact_path(store.project, artifact["id"]).read_text(encoding="utf-8"))
                     if impl_error:
-                        results[artifact["id"]] = P.check_result(P.RESULT_UNKNOWN, reason=impl_error)
+                        results[artifact["id"]] = P.check_result(
+                            P.RESULT_FAIL, counterexample={"calls": [], "reason": impl_error, "method": "compile"}
+                        )
                         continue
-                    key = _compare_key(on_disk, impl, frozen, config)
+                    undefined = sorted(f for f in on_disk["functions"] if f not in impl["functions"])
+                    if undefined:
+                        reason = f"交付的文件里没有实现接口函数 {undefined}"
+                        results[artifact["id"]] = P.check_result(
+                            P.RESULT_FAIL, counterexample={"calls": [], "reason": reason, "method": "compile"}
+                        )
+                        continue
+                    key = _compare_key(on_disk, delivered, frozen, config)
                     cached = store.cache_get("compare", key)
                     if cached is None:  # 算法1 第18行
                         try:
                             cached = checker_compare(ctx, on_disk, impl)
                         except ToolMissing as exc:
                             cached = P.check_result(P.RESULT_UNKNOWN, reason=str(exc))
+                        if cached.get("counterexample") and cached["counterexample"].get("reason"):
+                            cached["counterexample"]["reason"] = _code_errors(
+                                cached["counterexample"]["reason"], ctx.workdir
+                            )
                         if not (cached["status"] == P.RESULT_UNKNOWN and "safety timeout" in cached["reason"]):
                             store.cache_put("compare", key, cached)
                     results[artifact["id"]] = cached
     return _judge(state, store, config, plan, item_set, results)
+
+
+def _all_artifacts(plan: dict[str, Any]) -> list[dict[str, Any]]:
+    return [a for record in plan["items"].values() for seg in record["segments"] for a in _segment_artifacts(seg)]
 
 
 def _reading_result(reading: dict[str, Any], results: dict[str, dict[str, Any]]) -> dict[str, Any]:
@@ -1007,7 +1100,8 @@ def _judge(state, store, config, plan, item_set, results) -> dict[str, Any]:
     for entry in segments:
         if "outcome" not in entry:
             continue
-        for fn in entry["functions"]:
+        # Every compared requirement counts: one that names no function counts under its own name.
+        for fn in entry["functions"] or [f"<{entry['item']}.{entry['segment']}>"]:
             functions.setdefault(fn, {"outcomes": []})["outcomes"].append(entry["outcome"])
     for info in functions.values():
         statuses = [o["status"] for o in info["outcomes"]]

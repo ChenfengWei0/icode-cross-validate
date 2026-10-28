@@ -17,6 +17,7 @@ artifacts' definitions never collide.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -165,6 +166,10 @@ def equivalent(ctx: Context, a: dict[str, Any], b: dict[str, Any]) -> dict[str, 
     main = "\n" + "\n".join(decls) + "\nint main(void) {\n" + "\n".join(body) + "\n  return 0;\n}\n"
     verdict, values = _solve(ctx, f"eq_{a['id']}_{b['id']}", units, main)
     if verdict == "success":
+        # Equal predicates make equal readings only when the harnesses that assert them are the same too:
+        # the premises (value ranges, call orders) live in the harness.
+        if _normal(a["content"].get("harness", "")) != _normal(b["content"].get("harness", "")):
+            return {"equivalent": None, "distinguishing": None, "reason": "equal predicates, different harnesses"}
         return {"equivalent": True, "distinguishing": None, "reason": "the solver found no distinguishing input"}
     if verdict == "failure":
         return {
@@ -173,6 +178,13 @@ def equivalent(ctx: Context, a: dict[str, Any], b: dict[str, Any]) -> dict[str, 
             "reason": "readings disagree",
         }
     return {"equivalent": None, "distinguishing": None, "reason": f"solver gave no answer ({verdict})"}
+
+
+def _normal(code: str) -> str:
+    """C code without comments and whitespace, for comparing two harnesses as text."""
+    code = re.sub(r"/\*.*?\*/", "", code, flags=re.DOTALL)
+    code = re.sub(r"//[^\n]*", "", code)
+    return "".join(code.split())
 
 
 def _equivalent_cases(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:

@@ -42,7 +42,7 @@ def test_good_property_passes_all_four_checks(make_project):
     seg = project.segment()
     assert seg["status"] == P.SEG_DETERMINED
     checks = {c["check"]: c["ok"] for c in next(iter(seg["selfcheck"].values()))["checks"]}
-    assert checks == {"compiles": True, "negation": True, "reach": True}
+    assert checks == {"compiles": True, "uses_spec": True, "negation": True, "reach": True}
     assert "只有一个来源给出了子任务产物" in seg["notes"]
 
 

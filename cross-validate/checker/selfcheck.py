@@ -112,6 +112,7 @@ def _check_property(ctx: Context, artifact: dict[str, Any], examples: list[dict[
     if error:
         return [_ok("compiles", False, error)]
     checks = [_ok("compiles", True)]
+    checks += _uses_spec(artifact)
     checks += example_checks(ctx, artifact, examples)
     if "CHECK_REACH" not in artifact["content"]["harness"]:
         checks.append(_ok("reach", False, "the harness has no CHECK_REACH branch, so reachability cannot be checked"))
@@ -123,17 +124,33 @@ def _check_property(ctx: Context, artifact: dict[str, Any], examples: list[dict[
     if error:
         checks.append(_ok("compiles", False, error))
         return checks
+    # Every check must pass (§3 流程 5): a check that reaches no conclusion is not a pass.
     negation = cbmc(ctx, hold, unwind=ctx.limits.bounded_unwind, unwinding_assertions=False)
     if negation.verdict == "success":
         checks.append(_ok("negation", False, "holds for every implementation: the check is vacuous"))
+    elif negation.verdict == "failure":
+        checks.append(_ok("negation", True))
     else:
-        checks.append(_ok("negation", True if negation.verdict == "failure" else None, negation.reason))
+        checks.append(_ok("negation", False, f"could not show that the property can fail: {negation.reason}"))
     reached = cbmc(ctx, reach, unwind=ctx.limits.bounded_unwind, unwinding_assertions=False)
     if reached.verdict == "success":
         checks.append(_ok("reach", False, "no path reaches the assertion: the premises contradict each other"))
+    elif reached.verdict == "failure":
+        checks.append(_ok("reach", True))
     else:
-        checks.append(_ok("reach", True if reached.verdict == "failure" else None, reached.reason))
+        checks.append(_ok("reach", False, f"could not show that the assertion is reachable: {reached.reason}"))
     return checks
+
+
+def _uses_spec(artifact: dict[str, Any]) -> list[dict[str, Any]]:
+    """The canonical predicates are what readings, examples and conflicts are judged on, so the harness
+    must assert them: otherwise those judgements would be about something other than what is checked."""
+    harness = artifact["content"].get("harness", "")
+    judged = [n for n in _canonical_names(_spec(artifact)) if not n.startswith("cv_pre_")]
+    unused = [n for n in judged if f"{n}(" not in harness]
+    if unused:
+        return [_ok("uses_spec", False, f"the harness does not assert {unused}, which the spec defines")]
+    return [_ok("uses_spec", True)] if judged else []
 
 
 def _check_structure(ctx: Context, artifact: dict[str, Any]) -> list[dict[str, Any]]:
@@ -162,7 +179,7 @@ def _check_reference(ctx: Context, artifact: dict[str, Any], examples: list[dict
     error = syntax_check(ctx, source)
     if error:
         return [_ok("compiles", False, error)]
-    checks = [_ok("compiles", True)]
+    checks = [_ok("compiles", True), *_uses_spec(artifact)]
     names = _canonical_names(artifact["content"]["model"])
     for fn in artifact["functions"]:
         if f"cv_ref_{fn}" not in names:

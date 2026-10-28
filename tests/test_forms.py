@@ -39,7 +39,11 @@ def test_concrete_cases_run_directly(make_project):
     ok = run(make_project("discount", "cases-ok"), cases, "src/once.c")
     assert ok["signal"] == P.SIGNAL_PASS and ok["report"]["segments"][0]["strength"] == "cases"
     bad = run(make_project("discount", "cases-bad"), cases, "src/every.c")
-    assert bad["signal"] == P.SIGNAL_BLOCK and "discount(200) returned 160, expected 180" in bad["feedback"]
+    assert (
+        bad["signal"] == P.SIGNAL_BLOCK
+        and "discount(200) returned 160" in bad["feedback"]
+        and "180" not in bad["feedback"]
+    )
 
 
 def test_cases_need_a_constant_expectation(make_project):

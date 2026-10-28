@@ -124,6 +124,7 @@ def read_interface(project: Path, headers: list[str], include_dirs: list[str], c
     functions: dict[str, dict[str, Any]] = {}
     records: dict[str, dict[str, Any]] = {}
     texts: dict[str, str] = {}
+    definitions: list[str] = []
     for header in header_paths:
         if not header.is_file():
             raise ClangError(f"header {header} does not exist")
@@ -143,6 +144,10 @@ def read_interface(project: Path, headers: list[str], include_dirs: list[str], c
             rel = _rel(project, Path(file))
             if rel not in sources:
                 sources[rel] = Path(file).read_bytes()
+            if node.get("kind") == "FunctionDecl" and any(
+                c.get("kind") == "CompoundStmt" for c in node.get("inner", []) or []
+            ):
+                definitions.append(node["name"])  # a body in a header is implementation the generator would see
             if node.get("kind") == "FunctionDecl" and node.get("name") not in functions:
                 params = [
                     {"name": p.get("name", ""), "type": p["type"]["qualType"]}
@@ -173,6 +178,7 @@ def read_interface(project: Path, headers: list[str], include_dirs: list[str], c
         "header_texts": texts,
         "functions": functions,
         "records": records,
+        "definitions": sorted(set(definitions)),
         "types_digest": hashlib.sha256(types_text.encode("utf-8")).hexdigest(),
     }
 
@@ -266,6 +272,12 @@ def read_implementation(
                         rec = _is_record_type((target.get("type") or {}).get("qualType", ""), record_names)
                         if rec and "*" not in (target.get("type") or {}).get("qualType", ""):
                             writes.append({"records": sorted(rec), "field": "*", "line": line, "how": "whole"})
+                if kind in ("CStyleCastExpr", "ExplicitCastExpr") and n.get("castKind") == "BitCast" and n.get("inner"):
+                    # (long long *)acc: a record pointer turned into another pointer can write any field
+                    before = (_strip(n["inner"][0]).get("type") or {}).get("qualType", "")
+                    rec = _is_record_type(before, record_names) if "*" in before else set()
+                    if rec:
+                        writes.append({"records": sorted(rec), "field": "*", "line": line, "how": "cast"})
                 if kind == "CallExpr" and n.get("inner"):
                     callee = _strip(n["inner"][0])
                     name = (callee.get("referencedDecl") or {}).get("name", "")
@@ -290,22 +302,9 @@ def read_implementation(
     return {"functions": functions}
 
 
-def transitive_callees(functions: dict[str, dict[str, Any]], roots: list[str]) -> list[str]:
-    seen: set[str] = set()
-    todo = [r for r in roots if r in functions]
-    while todo:
-        name = todo.pop()
-        if name in seen:
-            continue
-        seen.add(name)
-        todo.extend(c for c in functions[name]["callees"] if c in functions and c not in seen)
-    return sorted(seen)
-
-
 __all__ = [
     "ClangError",
     "ast_dump",
     "read_implementation",
     "read_interface",
-    "transitive_callees",
 ]

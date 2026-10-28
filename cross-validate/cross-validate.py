@@ -259,7 +259,7 @@ def carry_round(sources: list[SourceValue]) -> WorkflowValue:
 
 
 def verify(value: WorkflowValue) -> WorkflowValue:
-    return _value(judge.verify(_state(value)))
+    return _value(judge.verify(_state(value), require_declaration=True))
 
 
 def decide(value: WorkflowValue) -> WorkflowValue:

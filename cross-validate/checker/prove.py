@@ -34,13 +34,21 @@ def prove(ctx: Context, harness: Path, name: str) -> dict[str, Any]:
     reach_goto = ctx.workdir / f"{name}.reach.goto"
     error = goto_compile(ctx, sources, goto) or goto_compile(ctx, sources, reach_goto, ["CHECK_REACH"])
     if error:
-        return P.check_result(P.RESULT_UNKNOWN, reason=f"the harness does not build with the implementation: {error}")
-
-    # Reach: with CHECK_REACH the assertion is assert(0); a failure means some path gets there.
-    reach = cbmc(ctx, reach_goto, unwind=ctx.limits.bounded_unwind, unwinding_assertions=False)
-    if reach.verdict == "success":
+        # The harness built against the headers at self-check; with the code it does not: the code's fault.
         return P.check_result(
-            P.RESULT_UNKNOWN, reach=False, reason="with this implementation no path reaches the assertion"
+            P.RESULT_FAIL,
+            counterexample={"calls": [], "reason": f"实现与检查程序无法一起构建：{error}", "method": "build"},
+        )
+
+    # Reach: with CHECK_REACH the assertion is assert(0); a failure means some path gets there. Unwinding
+    # assertions make "no path" a proof rather than an artefact of the bound.
+    reach = cbmc(ctx, reach_goto, unwind=ctx.limits.bounded_unwind, unwinding_assertions=True)
+    if reach.verdict == "success":
+        # Self-check showed the assertion reachable for some implementation under these premises; this
+        # one stops (exit, abort, assume(0)) on every input the premises allow: it never delivers.
+        reason = "对所有满足前提的输入，调用之后都到达不了检查点：实现提前退出、中止或不返回"
+        return P.check_result(
+            P.RESULT_FAIL, reach=False, counterexample={"calls": [], "reason": reason, "method": "reach"}
         )
     reach_known = reach.verdict == "failure"
     notes: list[str] = []

@@ -18,7 +18,7 @@ from typing import Any
 
 HERE = Path(__file__).resolve().parent
 RUNTIME = HERE / "runtime"
-CHECKER_VERSION = "1.0.0"
+CHECKER_VERSION = "1.1.0"
 
 SV_COMP_NONDET = (
     ("bool", "_Bool"),
