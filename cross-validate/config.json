@@ -1,0 +1,21 @@
+{
+  "main_profile": "Code",
+  "main_model": null,
+  "generator_profile": "cv-generator",
+  "generator_a_model": null,
+  "generator_b_model": null,
+  "max_rounds": 12,
+  "retry_limit": 3,
+  "k_induction_max": 2,
+  "unwind_full": 16,
+  "bounded_unwind": 6,
+  "sat_conflicts": 2000000,
+  "fuzz_iterations": 1000,
+  "fuzz_seed": 1,
+  "fuzz_max_draws": 64,
+  "min_strength": "cases",
+  "require_disambiguation": false,
+  "unknown_blocks": false,
+  "cflags": ["-std=c11"],
+  "safety_timeout_seconds": 300
+}
