@@ -165,11 +165,12 @@ def check_scope_2(c: Checker) -> Result:
 
 
 def check_scope_3(c: Checker) -> Result:
-    text = source("cv_protocol.py")
+    headers_only = '(".h", ".hpp", ".hh")' in source("cv_protocol.py")
+    test = c.tests_result("test_regressions::test_cpp_delivery_is_rejected")
     return ok(
-        '(".h", ".hpp", ".hh")' in text,
-        "static: the interface declaration accepts only header files",
-        "validate_interface",
+        headers_only and test.status == PASS,
+        "static + test",
+        f"validate_interface accepts only headers; C++ delivery rejected: {test.evidence}",
     )
 
 
@@ -286,6 +287,20 @@ def tests_of(*names: str) -> Callable[[Checker], Result]:
     return lambda c: c.tests_result(*names)
 
 
+def check_dev(phrase: str, test: str) -> Callable[[Checker], Result]:
+    """A deviation from the design passes when it is tested and stated among the README's limitations."""
+
+    def check(c: Checker) -> Result:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        limits = readme.split("## 局限", 1)[-1].split("\n## ", 1)[0]
+        result = c.tests_result(test)
+        if phrase not in limits:
+            return Result(FAIL, "README 局限 + test", f"README 局限 does not state it ({phrase!r})")
+        return Result(result.status, "README 局限 + test", f"stated in README 局限; {result.evidence}")
+
+    return check
+
+
 def check_alg(c: Checker) -> Result:
     narrow: set[int] = set()
     for path in py_files():
@@ -332,12 +347,14 @@ def check_int_3(c: Checker) -> Result:
     plan_key = function_source(PLUGIN / "judge.py", "_plan_key")
     compare_key = function_source(PLUGIN / "judge.py", "_compare_key")
     good = all(k in plan_key for k in ('"text"', '"examples"', '"headers"', '"types"', '"generator"')) and all(
-        k in compare_key for k in ('"bodies"', "transitive_callees", '"checker"', '"limits"')
+        k in compare_key for k in ('"delivered"', '"interface"', '"checker"', '"limits"')
     )
+    test = c.tests_result("test_regressions::test_changed_callee_is_not_served_from_cache")
+    good = good and test.status == PASS
     return ok(
         good,
         "static: cache keys",
-        "plan key = item text+examples, headers, types, generator+prompt version; compare key adds bodies of checked functions and callees, checker version, limits",
+        f"plan key = item text+examples, headers, types, generator+prompt version; compare key = artifact + every delivered file (superset of checked bodies and callees) + headers, checker version, limits; {test.evidence}",
     )
 
 
@@ -724,6 +741,7 @@ CHECKS: list[tuple[str, Callable[[Checker], Result]]] = [
             "test_discount::test_code_matching_no_reading_is_blocked_with_counterexample_only",
             "test_discount::test_report_tells_first_pass_from_pass_after_modification",
             "test_discount::test_first_pass_is_reported_as_such",
+            "test_forms::test_concrete_cases_run_directly",
         ),
     ),
     (
@@ -763,6 +781,7 @@ CHECKS: list[tuple[str, Callable[[Checker], Result]]] = [
         tests_of(
             "test_selfcheck::test_segment_span_must_come_from_the_item",
             "test_selfcheck::test_uncovered_segment_keeps_the_generators_reason",
+            "test_regressions::test_segment_without_functions_is_uncovered",
             "test_forms::test_reference_model_by_differential_testing",
             "test_forms::test_concrete_cases_run_directly",
         ),
@@ -789,8 +808,11 @@ CHECKS: list[tuple[str, Callable[[Checker], Result]]] = [
             "test_selfcheck::test_vacuous_property_is_discarded",
             "test_selfcheck::test_contradictory_premises_are_discarded",
             "test_selfcheck::test_missing_reach_branch_is_a_failure",
+            "test_regressions::test_harness_must_assert_the_spec_it_defines",
+            "test_regressions::test_inconclusive_self_check_is_not_a_pass",
             "test_forms::test_cases_need_a_constant_expectation",
             "test_forms::test_contradicting_requirements_are_marked_as_conflict",
+            "test_regressions::test_equal_predicates_under_different_premises_stay_two_readings",
         ),
     ),
     (
@@ -803,6 +825,10 @@ CHECKS: list[tuple[str, Callable[[Checker], Result]]] = [
             "test_forms::test_reference_model_by_differential_testing",
             "test_forms::test_concrete_cases_run_directly",
             "test_discount::test_results_are_deterministic",
+            "test_regressions::test_code_that_does_not_compile_is_blocked",
+            "test_regressions::test_code_that_never_returns_is_blocked",
+            "test_regressions::test_undefined_function_is_blocked",
+            "test_regressions::test_write_through_a_cast_is_blocked",
         ),
     ),
     (
@@ -844,6 +870,15 @@ CHECKS: list[tuple[str, Callable[[Checker], Result]]] = [
     ("P-PY-3", check_py_3),
     ("G-GIT-1", check_git_1),
     ("G-LIC-1", check_lic_1),
+    ("X-DEV-1", check_dev("C++ 或 Objective-C", "test_regressions::test_cpp_delivery_is_rejected")),
+    (
+        "X-DEV-2",
+        check_dev(
+            "没有新的完成清单", "test_regressions::test_stopping_without_a_declaration_is_blocked_in_the_workflow"
+        ),
+    ),
+    ("X-DEV-3", check_dev("先读取接口", "test_regressions::test_interface_declared_late_is_planned_before_comparison")),
+    ("X-DEV-4", check_dev("只能通过指令要求主 agent 不读", "test_discount::test_tampered_artifact_is_rejected")),
 ]
 
 
