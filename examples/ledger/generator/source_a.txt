@@ -1,0 +1,41 @@
+```json
+{
+  "artifacts": [
+    {
+      "item": "R1",
+      "segment": "S1",
+      "reading": "余额只由支付模块写入；余额与流水一致",
+      "functions": [
+        "account_init",
+        "pay",
+        "payment_credit",
+        "refund"
+      ],
+      "form": "property",
+      "kind": "P4",
+      "target": {
+        "record": "account_t",
+        "field": "balance"
+      },
+      "allowed_writers": [
+        "account_init",
+        "pay",
+        "payment_credit"
+      ]
+    },
+    {
+      "item": "R1",
+      "segment": "S1",
+      "form": "property",
+      "kind": "P2",
+      "reading": "余额只由支付模块写入；余额与流水一致",
+      "functions": [
+        "pay",
+        "refund"
+      ],
+      "spec": "",
+      "harness": "int main(void) {\n    account_t acc;\n    account_init(&acc, 1000);\n    long long expect = 1000;\n    while (1) {\n        __VERIFIER_assume(expect < 1000000000LL);\n        int amt = __VERIFIER_nondet_int();\n        __VERIFIER_assume(0 < amt && amt <= 10000);\n        if (__VERIFIER_nondet_int()) {\n            __VERIFIER_assume(expect >= amt);\n            pay(&acc, amt);    expect -= amt;\n        } else {\n            refund(&acc, amt); expect += amt;\n        }\n#ifdef CHECK_REACH\n        assert(0);\n#else\n        assert(acc.balance == expect);\n#endif\n    }\n}"
+    }
+  ]
+}
+```

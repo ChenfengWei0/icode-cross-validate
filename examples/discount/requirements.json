@@ -1,0 +1,6 @@
+{
+  "id": "Q-discount",
+  "items": [
+    {"id": "R1", "text": "下单时总价满 100 元减 20 元。", "examples": [], "source": "交叉验证与组合验证.md §3 流程 4"}
+  ]
+}

@@ -1,0 +1,18 @@
+```json
+{
+  "artifacts": [
+    {
+      "item": "R1",
+      "segment": "S1",
+      "form": "property",
+      "kind": "P1",
+      "reading": "只减一次",
+      "functions": [
+        "discount"
+      ],
+      "spec": "int cv_pre_discount(long total) { return total >= 0 && total <= 100000000; }\nint cv_post_discount(long total, long paid) { return paid == (total >= 100 ? total - 20 : total); }\n",
+      "harness": "int main(void) {\n    long total = __VERIFIER_nondet_long();\n    __VERIFIER_assume(cv_pre_discount(total));\n    long paid = discount(total);\n#ifdef CHECK_REACH\n    assert(0);\n#else\n    assert(cv_post_discount(total, paid));\n#endif\n    return 0;\n}"
+    }
+  ]
+}
+```

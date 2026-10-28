@@ -1,0 +1,41 @@
+```json
+{
+  "artifacts": [
+    {
+      "item": "R1",
+      "segment": "S1",
+      "reading": "资金变动经支付模块，余额等于初始加退款减付款",
+      "functions": [
+        "account_init",
+        "pay",
+        "payment_credit",
+        "refund"
+      ],
+      "form": "property",
+      "kind": "P4",
+      "target": {
+        "record": "account_t",
+        "field": "balance"
+      },
+      "allowed_writers": [
+        "account_init",
+        "pay",
+        "payment_credit"
+      ]
+    },
+    {
+      "item": "R1",
+      "segment": "S1",
+      "form": "property",
+      "kind": "P2",
+      "reading": "资金变动经支付模块，余额等于初始加退款减付款",
+      "functions": [
+        "pay",
+        "refund"
+      ],
+      "spec": "",
+      "harness": "int main(void) {\n    account_t a;\n    account_init(&a, 1000);\n    long long ledger = 1000;\n    for (;;) {\n        __VERIFIER_assume(ledger < 1000000000LL);\n        int x = __VERIFIER_nondet_int();\n        __VERIFIER_assume(x > 0 && x <= 10000);\n        _Bool is_pay = __VERIFIER_nondet_bool();\n        if (is_pay) {\n            __VERIFIER_assume(ledger >= x);\n            pay(&a, x);\n            ledger -= x;\n        } else {\n            refund(&a, x);\n            ledger += x;\n        }\n#ifdef CHECK_REACH\n        assert(0);\n#else\n        assert(a.balance == ledger);\n#endif\n    }\n}"
+    }
+  ]
+}
+```
