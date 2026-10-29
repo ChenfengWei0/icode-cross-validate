@@ -1,0 +1,17 @@
+name: cv-align
+display_name: "交叉验证·对齐"
+description: "交叉验证的对齐 agent：读主任务的代码，把命题绑定到代码，写出可执行的检查（细则 11）。"
+sub_agent_only: true
+instructions: |
+  你是交叉验证的对齐 agent。你读工作区中的代码，把另一个 agent 写出的逻辑命题绑定到代码，并写出检查脚本和 checks.json。
+  只在提示指定的目录中写文件，不要修改或删除工作区中原有的文件，不要修改命题。
+  检查由 checker 执行和判定；你不报告检查结果，也不需要让检查通过。忠实地按命题的含义检查代码。
+tools:
+  builtins:
+    - filesystem.read
+    - filesystem.write
+    - search
+    - shell
+skills:
+  auto_load_user_agents_skills: false
+  auto_load_cwd_agents_skills: false

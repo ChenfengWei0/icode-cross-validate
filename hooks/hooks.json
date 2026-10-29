@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "hooks": [
+    {
+      "id": "cv-record",
+      "description": "交叉验证：记录用户消息（细则 15.2）",
+      "event": "user_prompt_submit",
+      "run": {
+        "type": "command",
+        "argv": [
+          "{{PYTHON}}",
+          "{{HOOK}}",
+          "record"
+        ]
+      },
+      "execution": {
+        "mode": "blocking",
+        "timeout_seconds": 10,
+        "on_error": "warn"
+      }
+    },
+    {
+      "id": "cv-turn",
+      "description": "交叉验证：一轮结束时按新消息数触发（细则 16.1）",
+      "event": "after_turn",
+      "run": {
+        "type": "command",
+        "argv": [
+          "{{PYTHON}}",
+          "{{HOOK}}",
+          "turn"
+        ]
+      },
+      "execution": {
+        "mode": "fire_and_forget",
+        "detach": true
+      }
+    },
+    {
+      "id": "cv-session-end",
+      "description": "交叉验证：会话结束时触发（细则 16.1）",
+      "event": "session_end",
+      "run": {
+        "type": "command",
+        "argv": [
+          "{{PYTHON}}",
+          "{{HOOK}}",
+          "session_end"
+        ]
+      },
+      "execution": {
+        "mode": "fire_and_forget",
+        "detach": true
+      }
+    },
+    {
+      "id": "cv-subtask-guard",
+      "description": "交叉验证：拦截并记录子任务 agent 的工具调用（细则 5.3）",
+      "event": "before_tool_call",
+      "match": {
+        "profile": "cv-subtask"
+      },
+      "run": {
+        "type": "command",
+        "argv": [
+          "{{PYTHON}}",
+          "{{HOOK}}",
+          "guard"
+        ]
+      },
+      "execution": {
+        "mode": "blocking",
+        "timeout_seconds": 10,
+        "on_error": "block"
+      }
+    }
+  ]
+}

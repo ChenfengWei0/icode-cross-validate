@@ -1,0 +1,19 @@
+{
+  "main_profile": "Code",
+  "main_model": null,
+  "subtask_profile": "cv-subtask",
+  "subtask_model": null,
+  "align_profile": "cv-align",
+  "align_model": null,
+  "agent_timeout": 1800,
+  "check_timeout": 120,
+  "max_runs": 200,
+  "max_states": 10000,
+  "budget": 3600,
+  "max_discard_ratio": 0.5,
+  "auto": {"enabled": true, "min_new_messages": 3, "on_session_end": true},
+  "snapshot": {"exclude": [], "link": ["node_modules", ".venv"], "copy": [], "max_files": 20000, "max_bytes": 524288000},
+  "keep_snapshots": 0,
+  "keep_runs": 20,
+  "icode": "icode"
+}

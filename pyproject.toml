@@ -1,7 +1,7 @@
 [project]
 name = "icode-cross-validate"
-version = "1.0.0"
-description = "Cross validation (交叉验证) for iCode: an iCode workflow that certifies C/C++ code against independently generated checks"
+version = "2.0.0"
+description = "Cross validation (交叉验证) for iCode: controlled propositions from the requirement, bound to the code, judged into a credibility report"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.10"
@@ -17,7 +17,7 @@ testpaths = ["tests"]
 [tool.ruff]
 target-version = "py310"
 line-length = 120
-src = ["cross-validate", "tests", "scripts"]
+src = ["cross-validate", "tests", "scripts", "."]
 
 [tool.ruff.lint]
 select = [
@@ -41,9 +41,13 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# The checker's whole purpose is running compilers and verifiers as subprocesses (as iCode's shell tool).
-"cross-validate/checker/common.py" = ["S603", "S607"]
+# The checker, the launcher and the snapshot run programs as subprocesses (as iCode's shell tool).
+"cross-validate/cv_run.py" = ["S603", "S607"]
+"cross-validate/cv_flow.py" = ["S603", "S607"]
+"cv_cli.py" = ["S603", "S607", "T20"]
 # Tests use assert and run subprocess-backed code.
 "tests/*" = ["S101", "S603", "S607"]
 # The conformance checker prints its report and runs the tools it checks with.
 "scripts/*" = ["T20", "S603", "S607"]
+# The example's checks are scripts written by an alignment agent.
+"examples/*" = ["T20", "S311", "S603", "S607"]
