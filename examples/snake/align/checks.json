@@ -1,0 +1,98 @@
+{
+  "bindings": {
+    "蛇": "snake.py 中的 Game.snake",
+    "食物": "Game.food",
+    "游戏": "Game",
+    "长度(蛇)": "len(Game.snake.body)",
+    "头(蛇)": "Game.snake.head",
+    "尾(蛇)": "Game.snake.body[-1]",
+    "格子总数": "Game.width × Game.height",
+    "结束(游戏)": "Game.over",
+    "吃到(蛇,食物)": "这一步 Game.step() 返回 ate",
+    "撞到自身(蛇)": "这一步蛇头的目标格在蛇身中（插桩计算）",
+    "新生成(食物)": "这一步吃到后生成了新的 Game.food",
+    "位于蛇身(食物)": "Game.food 在 Game.snake.body 中",
+    "移动(蛇)": "这一步蛇头位置发生变化"
+  },
+  "checks": [
+    {
+      "proposition": "R9",
+      "form": "结构检查",
+      "kind": "command",
+      "command": "python3 \"$CV_ALIGN/r9_structure.py\"",
+      "timeout": 60
+    },
+    {
+      "proposition": "R1",
+      "form": "插桩加模糊测试",
+      "kind": "trace",
+      "command": "python3 \"$CV_ALIGN/run_snake.py\"",
+      "runs": 50,
+      "timeout": 60
+    },
+    {
+      "proposition": "R2",
+      "form": "插桩加模糊测试",
+      "kind": "trace",
+      "command": "python3 \"$CV_ALIGN/run_snake.py\"",
+      "runs": 50,
+      "timeout": 60
+    },
+    {
+      "proposition": "R3",
+      "form": "插桩加模糊测试",
+      "kind": "trace",
+      "command": "python3 \"$CV_ALIGN/run_snake.py\"",
+      "runs": 50,
+      "timeout": 60
+    },
+    {
+      "proposition": "R4",
+      "form": "插桩加模糊测试",
+      "kind": "trace",
+      "command": "python3 \"$CV_ALIGN/run_snake.py\"",
+      "runs": 50,
+      "timeout": 60
+    },
+    {
+      "proposition": "R5",
+      "form": "插桩加模糊测试",
+      "kind": "trace",
+      "command": "python3 \"$CV_ALIGN/run_snake.py\"",
+      "runs": 50,
+      "timeout": 60
+    },
+    {
+      "proposition": "R6",
+      "form": "插桩加模糊测试",
+      "kind": "trace",
+      "command": "python3 \"$CV_ALIGN/run_snake.py\"",
+      "runs": 50,
+      "timeout": 60
+    },
+    {
+      "proposition": "R7",
+      "form": "插桩加模糊测试",
+      "kind": "trace",
+      "command": "python3 \"$CV_ALIGN/run_snake.py\"",
+      "runs": 50,
+      "timeout": 60
+    },
+    {
+      "proposition": "R8",
+      "form": "插桩加模糊测试",
+      "kind": "trace",
+      "command": "python3 \"$CV_ALIGN/run_snake.py\"",
+      "runs": 50,
+      "timeout": 60
+    },
+    {
+      "proposition": "R10",
+      "form": "插桩加模糊测试",
+      "kind": "trace",
+      "command": "python3 \"$CV_ALIGN/run_snake.py\"",
+      "runs": 50,
+      "timeout": 60
+    }
+  ]
+}
