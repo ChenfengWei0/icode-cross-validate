@@ -64,7 +64,7 @@ README 的每条细则都是一条标准。核验方式：
 | I-AG-1 | agent 配置有 `name`、`display_name`、`description`、`instructions`，`sub_agent_only: true` | 静态 |
 | I-AG-2 | `cv-subtask` 的 `tools.builtins` 为空，`skills` 两个 `auto_load_*` 为 `false`，不配置 `memory` | 静态 |
 | I-AG-3 | `cv-align` 的 `tools.builtins` 为 `filesystem.read`、`filesystem.write`、`search`、`shell` | 静态 |
-| I-HK-1 | hooks 配置 `version: 1`；`id` 以 `cv-` 开头且唯一；事件、模式取合法值；`detach` 只与 `fire_and_forget` 同用；`before_tool_call` 有 `match.profile` | 静态 |
+| I-HK-1 | hooks 配置 `version: 1`；`id` 以 `cv-` 开头且唯一；事件、模式取合法值；`detach` 只与 `fire_and_forget` 同用；`before_tool_call` 有 `match.profile` 或 `match.args`，不匹配每一次工具调用 | 静态 |
 | I-HK-2 | hook 脚本从 `CHRYS_HOOK_PAYLOAD_FILE` 读输入，决定写到 `CHRYS_HOOK_RESULT` | 静态、测试 |
 | I-HK-3 | `icode hook validate` 通过（本机装有 iCode 时） | 静态（可选） |
 
