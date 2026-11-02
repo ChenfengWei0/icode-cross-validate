@@ -87,6 +87,8 @@ class Trace:
         if entity not in self.listed:
             return entity
         xs = (self.state(k).get("实体") or {}).get(entity, [])
+        if not xs:
+            raise _Absent  # 细则 12.4: nothing there now; atoms and comparisons with it are false
         if len(xs) != 1:
             raise AlignError(f"状态 {k} 中实体 {entity} 应恰有一个个体，实际为 {xs!r}（细则 12.4）")
         return xs[0]
@@ -483,7 +485,10 @@ def _static_atoms(n: dict, out: list[dict]) -> list[dict]:
 def _require_keys(atoms: list[dict], tr: Trace, k: int) -> None:
     """细则 12.3: state k gives every key the formula uses, whether or not evaluation reaches it."""
     for a in atoms:
-        ids = [_ind(x, tr, k) for x in a["args"]]
+        try:
+            ids = [_ind(x, tr, k) for x in a["args"]]
+        except _Absent:
+            continue
         if all(tr.present(k, i) for i in ids):
             tr.value(k, a["name"], ids)
 

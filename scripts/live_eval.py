@@ -5,7 +5,8 @@
 
 An example directory holds goal.txt, mutants.py and, optionally, seed/: files put in the project before
 the workflow starts. mutants.py gives TARGET, the file to replace, and prepare(code), which returns the
-source of every mutant for this round's code, or None when they cannot be made from it.
+source of every mutant for this round's code, or None when they cannot be made from it. MODE = "积累"
+runs accumulation mode: the goal becomes one recorded message and the code is never rewritten.
 
 A round that finished is not run again, so a stopped evaluation continues where it was. Each round has
 its own home and project, and bwrap shows it nothing else: no other round, no real home, no environment.
@@ -95,6 +96,33 @@ def run_workflow(round_dir: Path, home: Path, goal: str) -> None:
             timeout=ROUND_SECONDS,
             check=False,
         )
+
+
+def run_accumulation(round_dir: Path, home: Path, goal: str) -> None:
+    """The seed is the project; the requirement arrives as one recorded message; cv check runs it."""
+    proj = round_dir / "proj"
+    identity = ["-c", "user.name=eval", "-c", "user.email=eval@example.invalid"]
+    subprocess.run(["git", "add", "-A"], cwd=proj, check=True)
+    subprocess.run(["git", *identity, "commit", "-qm", "seed"], cwd=proj, check=True)
+    (round_dir / "goal.txt").write_text(goal, encoding="utf-8")
+    chrys = home / ".chrys"
+    script = (
+        f"{chrys}/cross-validate/bin/cv init . && "
+        f"python3 -c \"import sys; sys.path.insert(0, '{chrys}/workflows/cross-validate'); import cv_ledger as L; "
+        f"L.append_message('{proj}', 'eval', open('{round_dir}/goal.txt', encoding='utf-8').read(), False)\" && "
+        f"{chrys}/cross-validate/bin/cv check ."
+    )
+    with open(round_dir / "run.json", "w") as out, open(round_dir / "run.err", "w") as err:
+        try:
+            subprocess.run(
+                box(proj, round_dir, home, "sh", "-c", script),
+                stdout=out,
+                stderr=err,
+                timeout=ROUND_SECONDS,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            err.write("超时\n")
 
 
 def run_dir_of(home: Path) -> Path | None:
@@ -214,7 +242,10 @@ def evaluate_round(round_dir: Path, model_yaml: Path, example: Path) -> dict:
         shutil.rmtree(round_dir)  # no summary means it did not finish
     round_dir.mkdir(parents=True)
     home = prepare(round_dir, model_yaml, example / "seed")
-    run_workflow(round_dir, home, goal)
+    if getattr(mut, "MODE", "目标") == "积累":
+        run_accumulation(round_dir, home, goal)
+    else:
+        run_workflow(round_dir, home, goal)
     run = run_dir_of(home)
     report_path = run / "report.json" if run else None
     report = json.loads(report_path.read_text(encoding="utf-8")) if report_path and report_path.exists() else None

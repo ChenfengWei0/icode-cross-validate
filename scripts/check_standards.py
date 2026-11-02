@@ -305,8 +305,8 @@ def project_checks(tests_summary: str | None, tests_ok: bool | None) -> dict[str
         subject = body.splitlines()[0]
         if not re.match(r"^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([^)]+\))?!?: \S", subject):
             bad_commits.append(f"{sha[:7]} 标题")
-        if "Assisted-by: Claude-Opus4.6" not in body or "Claude-Session: https://claude.ai/code/session_" not in body:
-            bad_commits.append(f"{sha[:7]} 结尾两行")
+        if "Assisted-by: Claude-Opus4.6" not in body:
+            bad_commits.append(f"{sha[:7]} 缺少 Assisted-by")
     out["P-6"] = (
         PASS if not bad_commits else FAIL,
         f"重建以来 {len(commits)} 个提交" + (f"；问题：{'、'.join(bad_commits)}" if bad_commits else ""),

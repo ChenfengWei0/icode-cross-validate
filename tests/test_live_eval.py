@@ -122,5 +122,6 @@ def test_snake_bugs_apply_and_stay_importable():
 
 def test_snake_round_is_not_measured_when_the_code_changed():
     snake = load_snake()
+    assert snake.MODE == "积累" and not hasattr(MUT, "MODE")
     assert snake.prepare(snake.SEED + "\n") is not None
     assert snake.prepare(snake.SEED + "# changed\n") is None

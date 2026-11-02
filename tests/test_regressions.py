@@ -862,3 +862,24 @@ def test_example_may_end_with_a_call():
             ],
             {"栈"},
         )
+
+
+def test_entity_with_no_individual_now_is_false_not_an_error(decls):
+    """细则 12.4 a live run listed no food once it was eaten; every proposition naming food failed to align."""
+    tree, _ = G.parse_sentence("只要 蛇 吃到 食物，下一步 蛇的长度 等于 蛇的长度 加 1", decls)
+
+    def state(food, values):
+        return {"实体": {"蛇": ["蛇"], "食物": food, "游戏": ["游戏"]}, "值": values}
+
+    eaten = [
+        state(["f"], {"吃到(蛇,f)": False, "长度(蛇)": 2}),
+        state([], {"长度(蛇)": 2}),
+        state(["g"], {"吃到(蛇,g)": True, "长度(蛇)": 2}),
+        state([], {"长度(蛇)": 3}),
+    ]
+    assert M.judge(tree, eaten, ENT)["result"] == M.PRESUMED_TRUE
+    wrong = [*eaten[:3], state([], {"长度(蛇)": 2})]
+    assert M.judge(tree, wrong, ENT)["result"] == M.VIOLATED
+    # Several individuals are still a mistake when the entity is used as a constant.
+    with pytest.raises(M.AlignError, match="恰有一个个体"):
+        M.judge(tree, [state(["f", "g"], {"长度(蛇)": 2})], ENT)

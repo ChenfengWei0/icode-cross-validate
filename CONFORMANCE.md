@@ -93,7 +93,7 @@
 | 细则 12.1 | 通过 | 1 个测试：test_trace_format |
 | 细则 12.2 | 通过 | 1 个测试：test_time_convention |
 | 细则 12.3 | 通过 | 5 个测试：test_values、test_no_contradiction_is_true、test_big_integers_exact、test_missing_key_after_violation 等 |
-| 细则 12.4 | 通过 | 3 个测试：test_entity_constant、test_listed_entities、test_only_individual_may_be_keyed_by_entity_name |
+| 细则 12.4 | 通过 | 4 个测试：test_entity_constant、test_listed_entities、test_only_individual_may_be_keyed_by_entity_name、test_entity_with_no_individual_now_is_false_not_an_error |
 | 细则 12.5 | 通过 | 1 个测试：test_scenario |
 | 细则 12.6 | 通过 | 6 个测试：test_nonzero_exit_fails、test_empty_trace、test_trace_must_be_a_regular_file、test_partial_line_after_timeout 等 |
 | 细则 13.1 | 通过 | 2 个测试：test_four_values、test_progression_matches_reference |
@@ -153,7 +153,7 @@
 | P-1 | 通过 | 只导入标准库 |
 | P-2 | 通过 | ruff target-version = py310，workflow 声明 requires-python >=3.10 |
 | P-3 | 通过 | ruff check：All checks passed!；ruff format：53 files already formatted |
-| P-4 | 通过 | 插件本体 251 KB；含 iCode 版权声明的文件：无 |
-| P-5 | 通过 | pytest：212 passed in 117.57s (0:01:57) |
-| P-6 | 通过 | 重建以来 11 个提交 |
+| P-4 | 通过 | 插件本体 252 KB；含 iCode 版权声明的文件：无 |
+| P-5 | 通过 | pytest：213 passed in 119.01s (0:01:59) |
+| P-6 | 通过 | 重建以来 12 个提交 |
 | P-7 | 通过 | 含令牌或密钥的文件：无 |

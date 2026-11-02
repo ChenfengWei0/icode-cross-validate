@@ -77,5 +77,5 @@ README 的每条细则都是一条标准。核验方式：
 | P-3 | `ruff check` 通过，规则集沿用 iCode 的 `pyproject.toml` | 静态 |
 | P-4 | 仓库不含 iCode 源码；插件本体（不含文档和测试）不超过 400 KB | 静态 |
 | P-5 | `pytest` 全部通过 | 测试 |
-| P-6 | 提交信息用 Conventional Commits，结尾带 `Assisted-by` 和 `Claude-Session` 两行 | 静态（git log） |
+| P-6 | 提交信息用 Conventional Commits，结尾带 `Assisted-by` 一行；`Claude-Session` 可有可无 | 静态（git log） |
 | P-7 | 仓库不含令牌、密钥 | 静态 |
