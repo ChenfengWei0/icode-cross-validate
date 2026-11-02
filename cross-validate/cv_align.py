@@ -11,6 +11,10 @@ KINDS = ("command", "trace")
 
 
 def load(align_dir: Path) -> tuple[dict | None, str | None]:
+    # 细则 11.2: no links in align/, whose targets could change after freezing (细则 5.2).
+    links = sorted(str(x.relative_to(align_dir)) for x in Path(align_dir).rglob("*") if x.is_symlink())
+    if links:
+        return None, f"align/ 中不得有符号链接：{'、'.join(links[:5])}"
     path = Path(align_dir) / "checks.json"
     if not path.exists():
         return None, "对齐 agent 没有写出 align/checks.json"
@@ -54,6 +58,9 @@ def validate(data, props: dict[str, dict], limits: dict) -> dict:
             continue
         if not isinstance(command, str) or not command.strip():
             errors.append(f"{where}.command 应是非空字符串")
+            continue
+        if "\0" in command:
+            errors.append(f"{where}.command 不得含空字符（细则 11.8）")
             continue
         if kind == "trace" and props[pid]["class"] == "结构":
             errors.append(f"{where}：结构命题 {pid} 不能用 trace 检查")

@@ -5,73 +5,106 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import shutil
 import signal
+import stat
 import subprocess
+import sys
+import tempfile
 import time
 from pathlib import Path
 
 import cv_monitor as M
 import cv_state as S
 
-TAIL = 2000
+EXEC = Path(__file__).resolve().parent / "cv_exec.py"
 
+LINE_MAX = 1 << 20
+GRACE = 10
 
-def _tail(data: bytes | None) -> str:
-    return (data or b"").decode("utf-8", "replace")[-TAIL:]
+VACUOUS = "前件从未成立，实际没有被检验"
 
 
 def run_command(command: str, cwd: Path, env: dict[str, str], timeout: float) -> dict:
-    """`sh -c` in W with a new process group, killed as a whole on timeout."""
+    """细则 5.5: `sh -c` in W under the wrapper, which leaves no process behind and keeps only tails."""
     start = time.monotonic()
+    failed = {"exit": None, "timeout": False, "stdout": "", "stderr": ""}
     try:
         proc = subprocess.Popen(
-            ["sh", "-c", command],
+            [sys.executable, "-I", str(EXEC), str(timeout), "--", "sh", "-c", command],
             cwd=cwd,
-            env={**os.environ, **env},
+            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1", **env},
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
-    except OSError as e:
-        return {"exit": None, "timeout": False, "error": f"无法启动：{e}", "stdout": "", "stderr": "", "seconds": 0.0}
+    except (OSError, ValueError) as e:
+        return {**failed, "error": f"无法启动：{e}", "seconds": 0.0}
     try:
-        out, err = proc.communicate(timeout=timeout)
-        timed_out = False
+        out, _ = proc.communicate(timeout=timeout + GRACE)
+        result = json.loads(out.decode("utf-8", "replace"))
     except subprocess.TimeoutExpired:
-        with contextlib.suppress(ProcessLookupError):
+        with contextlib.suppress(OSError):
             os.killpg(proc.pid, signal.SIGKILL)
-        out, err = proc.communicate()
-        timed_out = True
-    return {
-        "exit": None if timed_out else proc.returncode,
-        "timeout": timed_out,
-        "error": "超时" if timed_out else None,
-        "stdout": _tail(out),
-        "stderr": _tail(err),
-        "seconds": round(time.monotonic() - start, 3),
-    }
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            proc.communicate(timeout=GRACE)
+        result = {**failed, "timeout": True, "error": "超时"}
+    except (json.JSONDecodeError, ValueError):
+        result = {**failed, "error": f"包装进程异常（退出码 {proc.returncode}）"}
+    result["seconds"] = round(time.monotonic() - start, 3)
+    return result
 
 
-def read_trace(path: Path, max_states: int) -> tuple[list[dict], bool]:
-    """细则 12.1: JSON Lines, one state per line. Invalid lines are an alignment failure."""
+def _no_constant(name: str):
+    raise ValueError(f"{name} 不是 JSON 值")
+
+
+def read_trace(
+    path: Path, max_states: int, max_bytes: int = 100 << 20, partial_ok: bool = False
+) -> tuple[list[dict], bool]:
+    """细则 12.1, 12.6: JSON Lines from a regular file, one state per line.
+
+    Returns (states, truncated). A bad line is an alignment failure, except an unterminated last line
+    of a run that timed out (`partial_ok`), which is dropped.
+    """
     states: list[dict] = []
-    if not path.exists():
+    try:
+        st = os.lstat(path)
+    except FileNotFoundError:
         return states, False
-    with open(path, encoding="utf-8") as f:
-        for n, line in enumerate(f, 1):
-            if not line.strip():
+    if not stat.S_ISREG(st.st_mode):
+        raise M.AlignError("轨迹文件不是普通文件（细则 12.6）")
+    read = 0
+    with open(path, "rb") as f:
+        n = 0
+        while True:
+            raw = f.readline(LINE_MAX + 1)
+            if not raw:
+                return states, False
+            n += 1
+            read += len(raw)
+            if read > max_bytes:
+                return states, True
+            if not raw.strip():
                 continue
             if len(states) >= max_states:
                 return states, True
+            last = not raw.endswith(b"\n")
             try:
-                state = json.loads(line)
-            except json.JSONDecodeError as e:
-                raise M.AlignError(f"轨迹第 {n} 行不是 JSON：{e}") from e
+                if len(raw) > LINE_MAX:
+                    raise M.AlignError(f"轨迹第 {n} 行超过 1 MB")
+                state = json.loads(raw.decode("utf-8"), parse_constant=_no_constant)
+            except (UnicodeDecodeError, ValueError, RecursionError, M.AlignError) as e:
+                if last and partial_ok:
+                    return states, True
+                if isinstance(e, M.AlignError):
+                    raise
+                why = "嵌套过深" if isinstance(e, RecursionError) else str(e)
+                raise M.AlignError(f"轨迹第 {n} 行不能解析：{why}") from e
             if not isinstance(state, dict):
                 raise M.AlignError(f"轨迹第 {n} 行应是对象")
             states.append(state)
-    return states, False
 
 
 def _counterexample(states: list[dict], at: int) -> dict:
@@ -91,6 +124,8 @@ def run_checks(run: Path, w: Path, props: dict[str, dict], frozen: dict, entitie
     align_dir = run / "align"
     deadline = time.monotonic() + limits["budget"]
     results: list[dict] = []
+    # 细则 5.5: Python in a check reads bytecode only from a fresh empty prefix, never W's __pycache__.
+    pycache = tempfile.mkdtemp(prefix="cv-pycache-")
     for check in frozen["checks"]:
         prop = props[check["proposition"]]
         rec = {**check, "runs_detail": [], "result": None, "reason": None, "counterexample": None}
@@ -98,7 +133,7 @@ def run_checks(run: Path, w: Path, props: dict[str, dict], frozen: dict, entitie
         if time.monotonic() >= deadline:
             rec.update(result=M.ALIGN_FAILED, reason="预算用尽，未运行")
             continue
-        base_env = {"CV_ALIGN": str(align_dir), "CV_W": str(w)}
+        base_env = {"CV_ALIGN": str(align_dir), "CV_W": str(w), "PYTHONPYCACHEPREFIX": pycache}
         if check["kind"] == "command":
             out = run_command(
                 check["command"], w, base_env, min(check["timeout"], max(1.0, deadline - time.monotonic()))
@@ -127,7 +162,7 @@ def run_checks(run: Path, w: Path, props: dict[str, dict], frozen: dict, entitie
             out = run_command(check["command"], w, env, min(check["timeout"], max(1.0, deadline - time.monotonic())))
             detail = {**out, "run": i, "trace": path.name}
             rec["runs_detail"].append(detail)
-            if path.exists():
+            if path.is_file() and not path.is_symlink():
                 detail["trace_sha256"] = S.sha256_file(path)
             if out["exit"] is None and not out["timeout"]:
                 detail.update(result=M.ALIGN_FAILED, reason=f"检查命令{out['error']}")
@@ -137,23 +172,38 @@ def run_checks(run: Path, w: Path, props: dict[str, dict], frozen: dict, entitie
                 # 细则 12.6: a crash of the program or of the check script fails the check.
                 detail["result"] = M.CHECK_FAILED
                 verdicts.append(M.CHECK_FAILED)
-                if rec["counterexample"] is None:
-                    rec["counterexample"] = {"run": i, "exit": out["exit"], "stderr": out["stderr"]}
+                cex = rec["counterexample"]
+                if cex is None or M.ORDER[M.CHECK_FAILED] < M.ORDER[cex.get("result", M.PASSED)]:
+                    rec["counterexample"] = {
+                        "run": i,
+                        "result": M.CHECK_FAILED,
+                        "exit": out["exit"],
+                        "stderr": out["stderr"],
+                    }
                 continue
             try:
-                states, truncated = read_trace(path, limits["max_states"])
+                states, truncated = read_trace(
+                    path, limits["max_states"], limits.get("max_trace_bytes", 100 << 20), partial_ok=out["timeout"]
+                )
                 if prop.get("pattern") == "从出发":
                     if not M.scenario_matches(prop["tree"], states, entities):
                         detail["result"] = "不相符"
                         continue
                     matched += 1
-                judged = M.judge(prop["tree"], states, entities)
-            except M.AlignError as e:
+                judged = M.judge(
+                    prop["tree"], states, entities, deadline=min(deadline, time.monotonic() + check["timeout"])
+                )
+            except Exception as e:  # 细则 4.8: untrusted input must not crash the node
                 detail["result"] = M.ALIGN_FAILED
-                detail["reason"] = str(e)
+                detail["reason"] = str(e) if isinstance(e, M.AlignError) else f"无法在轨迹上判定：{type(e).__name__}"
                 verdicts.append(M.ALIGN_FAILED)
                 continue
             detail.update(result=judged["result"], state=judged["state"], truncated=truncated or out["timeout"])
+            fired = M.triggered(prop["tree"], states, entities)
+            if fired is not None:  # 细则 13.7
+                rec["triggered"] = rec.get("triggered", False) or fired
+            if detail["truncated"]:
+                rec["truncated_runs"] = rec.get("truncated_runs", 0) + 1
             verdicts.append(judged["result"])
             if judged["result"] in (M.VIOLATED, M.CHECK_FAILED, M.PRESUMED_FALSE):
                 cex = rec["counterexample"]
@@ -170,21 +220,40 @@ def run_checks(run: Path, w: Path, props: dict[str, dict], frozen: dict, entitie
         if not verdicts:
             rec.update(result=M.ALIGN_FAILED, reason=rec["reason"] or "没有可判定的运行")
             continue
+        if rec["reason"]:  # 细则 11.8: a check cut short by the budget does not pass
+            verdicts.append(M.ALIGN_FAILED)
         rec["result"] = M.worst(verdicts)
         if rec["result"] == M.ALIGN_FAILED and not rec["reason"]:
             rec["reason"] = next(d.get("reason") for d in rec["runs_detail"] if d.get("result") == M.ALIGN_FAILED)
+        timeouts = sum(1 for d in rec["runs_detail"] if d.get("timeout"))
+        if timeouts:
+            rec["timeouts"] = timeouts
     by_prop: dict[str, dict] = {}
     for pid in props:
         mine = [r for r in results if r["proposition"] == pid]
+        # 细则 13.3: a coverage failure takes part in the worst; it does not hide what a check found.
         if pid in frozen["align_failures"]:
-            by_prop[pid] = {"result": M.ALIGN_FAILED, "reason": frozen["align_failures"][pid]}
-            continue
+            mine.append({"result": M.ALIGN_FAILED, "reason": frozen["align_failures"][pid], "counterexample": None})
+        if not mine:
+            mine.append({"result": M.ALIGN_FAILED, "reason": "没有任何检查", "counterexample": None})
         worst = M.worst([r["result"] for r in mine])
         reasons = [r["reason"] for r in mine if r["result"] == worst and r["reason"]]
         cexs = [r["counterexample"] for r in mine if r["result"] == worst and r["counterexample"]]
+        notes = []
+        for key, what in (("timeouts", "次运行超时"), ("truncated_runs", "条轨迹被截断")):
+            count = sum(r.get(key, 0) for r in mine)
+            if count:
+                notes.append(f"{count} {what}")
+        fired = [r["triggered"] for r in mine if "triggered" in r]
+        vacuous = bool(fired) and not any(fired)  # 细则 13.7
+        if vacuous:
+            notes.append(VACUOUS)
         by_prop[pid] = {
             "result": worst,
             "reason": reasons[0] if reasons else None,
             "counterexample": cexs[0] if cexs else None,
+            "notes": notes,
+            **({"vacuous": True} if vacuous else {}),
         }
+    shutil.rmtree(pycache, ignore_errors=True)
     return {"checks": results, "propositions": by_prop}

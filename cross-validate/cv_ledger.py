@@ -15,7 +15,7 @@ PLACEHOLDER = "〔已省略：粘贴的代码或日志〕"
 DISPOSITIONS = ("需求", "补充", "更正", "撤销", "已被更正", "非需求")
 MUST_QUOTE = ("需求", "补充", "更正")
 ASCII_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]+")
-FENCE = re.compile(r"```.*?(?:```|\Z)", re.DOTALL)
+FENCE = re.compile(r"(```|~~~).*?(?:\1|\Z)", re.DOTALL)
 STACK_LINE = re.compile(
     r"(Traceback \(most recent call last\)|^\s*File \".*\", line \d+|^\s*at \S.*:\d+|^\s*\w*(Error|Exception): ).*$",
     re.MULTILINE,
@@ -76,6 +76,11 @@ def new_ledger(project: Path | str) -> str:
 def _is_path(token: str) -> bool:
     if not re.search(r"[A-Za-z]", token):
         return False
+    if token.count("/") == 1 and not token.startswith(("/", "~/", "./", "../")):
+        # 细则 15.3: a single slash is a path only between two ASCII names, or with an extension.
+        left, right = token.split("/")
+        names = all(re.fullmatch(r"[A-Za-z_][\w.\-]+", side, re.ASCII) for side in (left, right))
+        return names or any(re.search(r"\.[A-Za-z]\w{0,5}$", side) for side in (left, right))
     return (
         token.startswith(("/", "~/", "./", "../"))
         or bool(re.search(r"\.\w{1,6}$", token))

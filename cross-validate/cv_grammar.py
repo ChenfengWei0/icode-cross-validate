@@ -19,12 +19,13 @@ RESERVED = frozenset(
     """的 是 不 没有 并且 或者 如果 那么 等于 不等于 小于 大于 不小于 不大于 加 减 乘 除
     总是 从不 只要 就 下一步 最终 一旦 此后一直 在 之前 不会 存在一个 恰好存在一个 对所有 使
     从 出发 依次执行 之后 调用 得到 失败 初始时 代码中存在 签名是 包含 字段 方法 类型 函数 模块
-    不调用 只有 修改 表示 元素 存在 签名 只由 动作""".split()  # noqa: SIM905
+    不调用 只有 修改 表示 元素 存在 签名 只由 动作 不是 true false null""".split()  # noqa: SIM905
 )
 CMP_WORDS = {"等于": "eq", "不等于": "ne", "小于": "lt", "大于": "gt", "不小于": "ge", "不大于": "le"}
 ARITH_WORDS = {"加": "add", "减": "sub", "乘": "mul", "除": "div"}
 COMPOUNDS = {"代码中存在表示": ["代码中存在", "表示"], "的元素": ["的", "元素"], "的签名是": ["的", "签名是"]}
-NUMBER = re.compile(r"-?\d+(?:\.\d+)?")
+NUMBER = F._NUMBER  # 细则 8.1
+DIGITS = re.compile(r"-?\d")
 
 # Pattern names used by the checks (细则 9.1 第 5 项).
 STRUCTURE_PATTERNS = {"结构：存在", "结构：签名", "结构：包含", "结构：调用", "结构：只有", "结构：表示"}
@@ -107,6 +108,8 @@ def lex(sentence: str, decls: Decls) -> list[W]:
                 tok.kind, tok.value = "num", json.loads(tok.text)
             elif tok.text in ("true", "false", "null"):
                 tok.kind, tok.value = "json", json.loads(tok.text)
+            elif DIGITS.match(tok.text) and not decls.kind(tok.text):
+                raise FormulaError(f"数的写法不合法：{tok.text}（细则 8.1：ASCII 数字，不带多余的前导零）")
     return out
 
 
@@ -114,13 +117,19 @@ def _split_word(word: str, decls: Decls) -> list[str]:
     """Undo glued forms: compounds of keywords, and 没有p / 不p (细则 8.3)."""
     if word in COMPOUNDS:
         return COMPOUNDS[word]
-    if word in RESERVED or decls.kind(word):
-        return [word]
+    split = None
     for neg in ("没有", "不"):
         rest = word[len(neg) :]
         if word.startswith(neg) and rest and decls.kind(rest) == "谓词":
-            return [neg, rest]
-    return [word]
+            split = [neg, rest]
+            break
+    if word in RESERVED:
+        return [word]
+    if decls.kind(word):
+        if split:  # 细则 7.1, 8.3: a declared 不p next to a declared p has two readings
+            raise FormulaError(f"{word} 有歧义：既是声明的名称，也可读作 {split[0]} {split[1]}")
+        return [word]
+    return split or [word]
 
 
 # ---------------------------------------------------------------------------------------------------
@@ -403,6 +412,28 @@ def _state(toks: list[W], decls: Decls) -> dict:
     return out
 
 
+NEGATED_CMP = {"eq": "ne", "ne": "eq", "lt": "ge", "ge": "lt", "gt": "le", "le": "gt"}
+
+
+def _push_not(n: dict, neg: bool = False) -> dict:
+    """细则 8.6: move 不 onto the atoms; a negated comparison takes the opposite comparison."""
+    op = n["op"]
+    if op == "not":
+        return _push_not(n["args"][0], not neg)
+    if op in ("and", "or"):
+        flipped = {"and": "or", "or": "and"}[op] if neg else op
+        return (F.mk_and if flipped == "and" else F.mk_or)(*(_push_not(a, neg) for a in n["args"]))
+    if op == "implies":
+        return _push_not(F.mk_or(F.mk_not(n["args"][0]), n["args"][1]), neg)
+    if op in F.COMPARISONS:
+        return F.node(NEGATED_CMP[op], *n["args"]) if neg else n
+    return F.mk_not(n) if neg else n
+
+
+def _state_dependent(n: dict) -> bool:
+    return any(m["op"] in ("term", "const", "var") for m in F.walk(n))
+
+
 def next_step(q: dict) -> dict:
     """细则 8.6: N(Q). Without comparisons X Q; otherwise X on each literal and ′ on each comparison."""
     if not any(m["op"] in F.COMPARISONS for m in F.walk(q)):
@@ -411,14 +442,17 @@ def next_step(q: dict) -> dict:
     def go(n: dict) -> dict:
         op = n["op"]
         if op in F.COMPARISONS:
-            return F.node(op, F.node("next", n["args"][0]), n["args"][1])
+            left, right = n["args"]
+            if not _state_dependent(left):  # L′ is meaningless: the whole comparison is next
+                return F.node("X", n)
+            return F.node(op, F.node("next", left), right)
         if op == "pred" or (op == "not" and n["args"][0]["op"] == "pred"):
             return F.node("X", n)
-        if op in ("and", "or", "implies", "not"):
+        if op in ("and", "or"):
             return F.node(op, *(go(a) for a in n["args"]))
         raise FormulaError(f"下一步 中不能有 {op}")
 
-    return go(q)
+    return go(_push_not(q))
 
 
 def at_state(n: dict, k: int) -> dict:
@@ -488,7 +522,7 @@ def parse_sentence(sentence: str, decls: Decls) -> tuple[dict, str]:
             else:
                 p = _P(target, decls)
                 d = p.expr()
-                if not p.done() or d["op"] not in ("term", "const"):
+                if not p.done() or d["op"] != "term" or d["name"] == F.ACTION:
                     raise FormulaError("只有 `M` 修改 D：D 应是代码名或已声明的位置、数量")
             return F.node("struct", m, d, kind="only"), "结构：只有"
         if first is not None and first.kind == "code" and len(cl[0]) >= 2:

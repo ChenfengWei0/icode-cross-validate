@@ -69,13 +69,21 @@ def is_accum(value: WorkflowValue) -> bool:
 
 
 def carry_intake(sources: list[SourceValue]) -> WorkflowValue:
-    return _by_node(sources)["intake"]
+    by = _by_node(sources)
+    value = by["intake"]
+    if is_goal(value) and "implement" not in by:
+        # 细则 4.2: the main agent failed or was interrupted; the goal is not reached.
+        state = {**_state(value), "stopped": "主 agent 没有完成目标（失败或被中断），不算目标达成（细则 4.2）"}
+        return WorkflowValue(text="", data=state)
+    return value
 
 
 def after_implement(value: WorkflowValue) -> WorkflowValue:
     state = _state(value)
     # The join also fires in accumulation mode, where `implement` is skipped; pass that state on unused.
-    return WorkflowValue(text="", data=FLOW.after_implement(state) if is_goal(value) else state)
+    if is_goal(value) and not state.get("stopped"):
+        state = FLOW.guarded("after_implement", FLOW.after_implement, state)
+    return WorkflowValue(text="", data=state)
 
 
 # ---------------------------------------------------------------------------------------------------
@@ -90,7 +98,11 @@ def stage(name: str, profile: str, model, make_prompt, check):
         state = _state(value)
         if state.get("stopped") or state.get("invalid"):
             return WorkflowValue(text="", data={**state, "skip": True})
-        return WorkflowValue(text=make_prompt(state), data={**state, "skip": False})
+        try:
+            text = make_prompt(state)
+        except Exception as e:  # 细则 4.8: untrusted input must not crash the node
+            return WorkflowValue(text="", data={**state, "stopped": f"{name}_prompt 节点出错：{e}", "skip": True})
+        return WorkflowValue(text=text, data={**state, "skip": False})
 
     def runs_agent(value: WorkflowValue) -> bool:
         return not _state(value).get("skip")
@@ -104,9 +116,10 @@ def stage(name: str, profile: str, model, make_prompt, check):
 
     def check_node(value: WorkflowValue) -> WorkflowValue:
         state, answered = value.data["state"], value.data["answered"]
-        if state.pop("skip", False) or not answered:
+        if state.pop("skip", False):
             return WorkflowValue(text="", data=state)
-        state, revise = check(state, value.text, 1)
+        # 细则 4.8: no answer counts as still failing after a rewrite; there is no rewrite.
+        state, revise = FLOW.guarded(f"{name}_check", check, state, value.text if answered else None, 1)
         return WorkflowValue(text=revise or "", data={**state, "revise": revise is not None})
 
     def needs_redo(value: WorkflowValue) -> bool:
@@ -121,8 +134,8 @@ def stage(name: str, profile: str, model, make_prompt, check):
 
     def final_node(value: WorkflowValue) -> WorkflowValue:
         state, answered = value.data["state"], value.data["answered"]
-        if state.pop("revise", False) and answered:
-            state, _ = check(state, value.text, 2)
+        if state.pop("revise", False):
+            state, _ = FLOW.guarded(f"{name}_final", check, state, value.text if answered else None, 2)
         state.pop("revising", None)
         return WorkflowValue(text="", data=state)
 
@@ -144,7 +157,8 @@ def align_check(state: dict, answer: str, attempt: int):
 
 
 def run_checks(value: WorkflowValue) -> WorkflowValue:  # 算法1 第7行
-    return WorkflowValue(text="", data=FLOW.run_checks(_state(value), CONFIG))
+    state = FLOW.guarded("run_checks", lambda s: FLOW.run_checks(s, CONFIG), _state(value))
+    return WorkflowValue(text="", data=state)
 
 
 def report(value: WorkflowValue) -> str:  # 算法1 第8行

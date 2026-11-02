@@ -8,6 +8,7 @@ import re
 import cv_grammar as G
 from cv_formula import Decls
 
+LIST_CATEGORIES = ("实体", "动作", "接口")  # 细则 7.1: may list several names on one line
 LABELS = ["规则", "条件", "数量约束", "示例", "接口规定"]
 NO_LABEL = "无"
 CHECKLIST = ["存在", "状态", "不变式", "动作的效果", "事件的后果", "边界", "终态", "最终会发生的事", "结构"]
@@ -15,8 +16,11 @@ CATEGORIES = ["实体", "谓词", "位置", "数量", "动作", "接口"]
 FIELDS = ["编号", "来源", "依据", "句子", "公式"]
 SECTIONS = ["声明", "清单", "命题"]
 SENTENCE_END = re.compile(r"[^。！？；\n]*[。！？；\n]|[^。！？；\n]+$")
-BAD_NAME = re.compile(r"[\s()（）,，、`「」]")
+# 细则 7.1: word characters only, not starting with a digit, no trailing _k, not a single Latin letter.
+GOOD_NAME = re.compile(r"[^\W\d]\w*")
 COLUMNS = re.compile(r"\s{2,}|\t")
+# 细则 7.3: a field line, tolerating **bold**, a colon after the name and a leading list marker.
+FIELD_LINE = re.compile(r"^(?:[-*]\s+)?\**\s*(编号|来源|依据|句子|公式)\s*\**\s*(?:[：:]\s*|\s+)(.*)$")
 
 
 def strip_fences(text: str) -> str:
@@ -27,11 +31,14 @@ def strip_fences(text: str) -> str:
 def extract_json(text: str, opener: str):
     """The JSON value in an agent's answer: the span from the first opener to the last closer."""
     closer = "]" if opener == "[" else "}"
-    body = strip_fences(text)
+    body = strip_fences(text or "")
     start, end = body.find(opener), body.rfind(closer)
     if start < 0 or end < start:
         raise ValueError(f"回答中没有 JSON {'数组' if opener == '[' else '对象'}")
-    return json.loads(body[start : end + 1])
+    try:
+        return json.loads(body[start : end + 1])
+    except RecursionError as e:
+        raise ValueError("JSON 嵌套过深") from e
 
 
 def _squash(s: str) -> str:
@@ -107,7 +114,7 @@ def _sections(text: str) -> dict[str, list[str]]:
     out: dict[str, list[str]] = {}
     current = None
     for line in strip_fences(text).splitlines():
-        head = line.strip().rstrip("：:")
+        head = line.strip().strip("#*").strip().rstrip("：:").strip("*").strip()
         if head in SECTIONS and not line[:1].isspace():
             current = head
             out.setdefault(current, [])
@@ -142,14 +149,15 @@ def parse_declarations(lines: list[str], quotable: str) -> tuple[Decls, list[str
             if category is None:
                 errors.append(f"声明行没有类别：{line.strip()}")
             continue
-        entries = [n.strip() for n in re.split(r"[、]", cols[0])] if category in ("实体", "动作") else [cols[0]]
+        entries = [n.strip() for n in re.split(r"[、]", cols[0])] if category in LIST_CATEGORIES else [cols[0]]
         meaning = " ".join(cols[1:])
         for entry in entries:
             name, params = _name_params(entry)
             if category in ("实体", "动作", "接口") and params:
                 errors.append(f"{category} {name} 不带参数")
-            if not name or BAD_NAME.search(name):
-                errors.append(f"名称不合法：{entry}（不能含空白、括号、逗号、反引号、「」）")
+            problem = name_problem(name)
+            if problem:
+                errors.append(f"名称不合法：{entry}（{problem}）")
                 continue
             if name in G.RESERVED:
                 errors.append(f"名称 {name} 是保留字")
@@ -161,7 +169,7 @@ def parse_declarations(lines: list[str], quotable: str) -> tuple[Decls, list[str
                 errors.append(f"谓词 {name} 至少要有一个参数（谓词带上它所描述的对象）")
             if category == "接口" and name not in quotable:
                 errors.append(f"接口名 {name} 没有逐字出现在需求原话中")
-            if category in ("谓词", "位置", "数量", "接口") and not meaning:
+            if category in ("谓词", "位置", "数量") and not meaning:
                 errors.append(f"{name} 没有写含义")
             decls.category[name] = category
             decls.params[name] = params
@@ -172,9 +180,56 @@ def parse_declarations(lines: list[str], quotable: str) -> tuple[Decls, list[str
         for p in params
         if decls.kind(p) != "实体"
     )
+    errors.extend(glued_ambiguities(decls))
     if not decls.category:
         errors.append("没有任何声明")
     return decls, errors
+
+
+def name_problem(name: str) -> str | None:
+    """细则 7.1: why a declared name is not acceptable, or None."""
+    if not GOOD_NAME.fullmatch(name):
+        return "只能由文字、字母、数字和下划线组成，不以数字开头"
+    if re.search(r"_\d+$", name):
+        return "不能以下划线加数字结尾，那是下标的写法"
+    if re.fullmatch(r"[A-Za-z]", name):
+        return "不能是单个拉丁字母，它与变量和时序算子冲突"
+    return None
+
+
+def declaration_problems(name: str, decls: Decls, quotable: str) -> list[str]:
+    """细则 9.2 for one declared name, as parse_declarations checks it (used for names added in a rewrite)."""
+    category, params, meaning = decls.category[name], decls.params.get(name, []), decls.meaning.get(name, "")
+    out = []
+    problem = name_problem(name)
+    if problem:
+        out.append(f"名称不合法：{problem}")
+    if name in G.RESERVED:
+        out.append(f"名称 {name} 是保留字")
+    if category not in CATEGORIES:
+        out.append(f"类别 {category} 不合法")
+    if category in ("实体", "动作", "接口") and params:
+        out.append(f"{category} {name} 不带参数")
+    if category == "谓词" and not params:
+        out.append(f"谓词 {name} 至少要有一个参数")
+    if category == "接口" and name not in quotable:
+        out.append(f"接口名 {name} 没有逐字出现在需求原话中")
+    if category in ("谓词", "位置", "数量", "接口") and not meaning:
+        out.append(f"{name} 没有写含义")
+    out.extend(f"参数 {p} 不是已声明的实体" for p in params if decls.kind(p) != "实体")
+    out.extend(x for x in glued_ambiguities(decls) if f" {name} " in f" {x} " or x.startswith(f"名称 {name} "))
+    return out
+
+
+def glued_ambiguities(decls: Decls) -> list[str]:
+    """细则 7.1, 8.3: a name 不p or 没有p next to a declared predicate p reads two ways."""
+    out = []
+    for name in decls.category:
+        for neg in ("没有", "不"):
+            rest = name[len(neg) :]
+            if name.startswith(neg) and rest and decls.kind(rest) == "谓词":
+                out.append(f"名称 {name} 与谓词 {rest} 冲突：粘连写法 {name} 也可读作 {neg} {rest}")
+    return out
 
 
 def parse_checklist(lines: list[str]) -> tuple[dict[str, dict], list[str]]:
@@ -219,30 +274,60 @@ def parse_propositions(lines: list[str]) -> tuple[list[dict], list[str]]:
             continue
         prop: dict = {"problems": []}
         for line in block:
-            cols = COLUMNS.split(line, maxsplit=1)
-            if len(cols) != 2 or cols[0] not in FIELDS:
+            m = FIELD_LINE.match(line)
+            if not m:
                 prop["problems"].append(f"无法识别的行：{line}")
                 continue
-            if cols[0] in prop:
-                prop["problems"].append(f"字段重复：{cols[0]}")
-            prop[cols[0]] = cols[1].strip()
-        if "编号" not in prop:
-            errors.append(f"有一条命题没有编号：{block[0]}")
-            continue
+            field, value = m.group(1), m.group(2).strip().strip("*").strip()
+            if field in prop:
+                prop["problems"].append(f"字段重复：{field}")
+            prop[field] = value
+        if not prop.get("编号"):
+            # 细则 7.3: never drop a block silently; it goes back for rewriting with the others.
+            prop["编号"] = ""
+            prop["problems"].append("读不出编号：" + " / ".join(block)[:80])
         out.append(prop)
     return out, errors
 
 
+def interruption(sections: dict, checklist: dict, props: list[dict]) -> str | None:
+    """细则 7.2: the output looks cut off. The program cannot see the model's finish reason."""
+    if "声明" in sections and "命题" not in sections:
+        where = "命题段之前"
+    else:
+        ids = {p["编号"] for p in props}
+        missing = {pid for entry in checklist.values() for pid in entry["ids"]} - ids
+        numbers = [int(p[1:]) for p in ids if re.fullmatch(r"R\d+", p)]
+        last = props[-1] if props else {}
+        incomplete = bool(props) and not all(last.get(k) for k in ("来源", "依据", "句子"))
+        beyond = bool(numbers) and all(re.fullmatch(r"R\d+", p) and int(p[1:]) > max(numbers) for p in missing)
+        if not missing or not (incomplete or beyond):
+            return None
+        where = f"{last.get('编号') or '最后一条命题'} 处"
+    return (
+        f"输出看起来在{where}中断了，很可能撞到了模型的输出上限（思考和答案共用）。"
+        "这次少写几条命题，完整地输出；反复出现时，调大模型配置的 max_output_tokens（细则 7.2）"
+    )
+
+
 def parse_subtask(text: str, quotable: str) -> dict:
-    sections = _sections(text)
+    sections = _sections(text or "")
     errors = [f"缺少 {name} 段" for name in SECTIONS if name not in sections]
     decls, decl_errors = parse_declarations(sections.get("声明", []), quotable)
     checklist, checklist_errors = parse_checklist(sections.get("清单", []))
     props, prop_errors = parse_propositions(sections.get("命题", []))
+    ids = {p["编号"] for p in props}
+    checklist_errors.extend(
+        f"清单项 {item} 列出的 {pid} 不是本次输出中的命题编号"
+        for item, entry in checklist.items()
+        for pid in entry["ids"]
+        if pid not in ids
+    )
+    cut = interruption(sections, checklist, props)
     return {
         "decls": decls,
         "checklist": checklist,
         "propositions": props,
-        "errors": errors + decl_errors + checklist_errors,
+        "errors": ([cut] if cut else []) + errors + decl_errors + checklist_errors,
         "block_errors": prop_errors,
     }

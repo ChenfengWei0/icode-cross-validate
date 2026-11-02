@@ -40,3 +40,45 @@ hooks:
       mode: blocking
       timeout_seconds: 10
       on_error: block
+  - id: cv-history-guard-path
+    description: "交叉验证：拦下路径中提到状态目录的工具调用（细则 5.6）"
+    event: before_tool_call
+    match:
+      args:
+        path:
+          regex: "chrys/cross-validate|cross-validate/projects"
+    run:
+      type: command
+      argv: ["{{PYTHON}}", "{{HOOK}}", "history"]
+    execution:
+      mode: blocking
+      timeout_seconds: 10
+      on_error: warn
+  - id: cv-history-guard-command
+    description: "交叉验证：拦下命令中提到状态目录的工具调用（细则 5.6）"
+    event: before_tool_call
+    match:
+      args:
+        command:
+          regex: "chrys/cross-validate|cross-validate/projects"
+    run:
+      type: command
+      argv: ["{{PYTHON}}", "{{HOOK}}", "history"]
+    execution:
+      mode: blocking
+      timeout_seconds: 10
+      on_error: warn
+  - id: cv-history-guard-workdir
+    description: "交叉验证：拦下工作目录中提到状态目录的工具调用（细则 5.6）"
+    event: before_tool_call
+    match:
+      args:
+        working_dir:
+          regex: "chrys/cross-validate|cross-validate/projects"
+    run:
+      type: command
+      argv: ["{{PYTHON}}", "{{HOOK}}", "history"]
+    execution:
+      mode: blocking
+      timeout_seconds: 10
+      on_error: warn

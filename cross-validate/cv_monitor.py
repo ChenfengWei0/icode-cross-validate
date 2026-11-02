@@ -8,7 +8,7 @@ judged with finite-trace semantics: weak next, G, W, R hold at the end, strong n
 from __future__ import annotations
 
 import json
-import math
+import time
 
 import cv_formula as F
 
@@ -49,6 +49,18 @@ class Trace:
     def __init__(self, states: list[dict], entities: set[str]):
         self.states = states
         self.entities = entities
+        # 细则 12.4: entities listed in some state; the others are singletons named by the entity.
+        self.listed: set[str] = set()
+        for k, state in enumerate(states):
+            listed = state.get("实体")
+            if listed is None:
+                continue
+            if not isinstance(listed, dict):
+                raise AlignError(f"状态 {k} 的 实体 应是对象")
+            for name, xs in listed.items():
+                if not isinstance(xs, list) or not all(_scalar(x) for x in xs):
+                    raise AlignError(f"状态 {k} 的 实体.{name} 应是由字符串或数组成的列表（细则 12.4）")
+                self.listed.add(name)
 
     def __len__(self) -> int:
         return len(self.states)
@@ -72,11 +84,10 @@ class Trace:
         return xs
 
     def constant(self, k: int, entity: str):
-        listed = self.state(k).get("实体")
-        if not isinstance(listed, dict) or entity not in listed:
+        if entity not in self.listed:
             return entity
-        xs = listed[entity]
-        if not isinstance(xs, list) or len(xs) != 1:
+        xs = (self.state(k).get("实体") or {}).get(entity, [])
+        if len(xs) != 1:
             raise AlignError(f"状态 {k} 中实体 {entity} 应恰有一个个体，实际为 {xs!r}（细则 12.4）")
         return xs[0]
 
@@ -84,13 +95,19 @@ class Trace:
         listed = self.state(k).get("实体")
         if not isinstance(listed, dict):
             return True
-        return any(isinstance(xs, list) and ind in xs for xs in listed.values()) or ind in self.entities
+        if any(ind in xs for xs in listed.values()):
+            return True
+        return isinstance(ind, str) and ind in self.entities and ind not in self.listed
 
     def value(self, k: int, key: str):
         values = self.state(k).get("值")
         if not isinstance(values, dict) or key not in values:
             raise AlignError(f"状态 {k} 缺少 {key}（细则 12.3）")
         return values[key]
+
+
+def _scalar(x) -> bool:
+    return isinstance(x, (str, int, float)) and not isinstance(x, bool)
 
 
 def _key(name: str, ids: list) -> str:
@@ -141,8 +158,10 @@ def term_value(n: dict, tr: Trace, k: int):
 def _same(a, b) -> bool:
     if isinstance(a, bool) != isinstance(b, bool):
         return False
+    if isinstance(a, int) and isinstance(b, int):
+        return a == b  # 细则 12.3: integers exactly
     if isinstance(a, (int, float)) and isinstance(b, (int, float)):
-        return math.isclose(a, b, rel_tol=0, abs_tol=1e-9)
+        return abs(a - b) <= 1e-9
     return json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
 
 
@@ -189,12 +208,14 @@ def holds(n: dict, tr: Trace, k: int) -> bool:
     op = n["op"]
     if op == "not":
         return not holds(n["args"][0], tr, k)
+    # Every operand is evaluated, so a missing key is found even where the result is already known (细则 12.3).
     if op == "and":
-        return all(holds(a, tr, k) for a in n["args"])
+        return all([holds(a, tr, k) for a in n["args"]])  # noqa: C419 — no short circuit
     if op == "or":
-        return any(holds(a, tr, k) for a in n["args"])
+        return any([holds(a, tr, k) for a in n["args"]])  # noqa: C419 — no short circuit
     if op == "implies":
-        return not holds(n["args"][0], tr, k) or holds(n["args"][1], tr, k)
+        a, b = holds(n["args"][0], tr, k), holds(n["args"][1], tr, k)
+        return not a or b
     if op in F.QUANTIFIERS:
         values = [holds(subst(n["args"][0], n["var"], i), tr, k) for i in tr.individuals(k, n.get("type"))]
         if op == "forall":
@@ -228,9 +249,11 @@ def nnf(n: dict, neg: bool = False) -> dict:
     op = n["op"]
     if op == "lit" and isinstance(n["value"], bool):
         return TRUE if n["value"] != neg else FALSE
-    if op in F.COMPARISONS and n["args"][0]["op"] == "next":
-        # L′ op R  ≡  X (L op c), c the value of R now. Its negation takes the strong next.
-        return {"op": "Xcmp", "cmp": op, "L": n["args"][0]["args"][0], "R": n["args"][1], "neg": neg}
+    if op in F.COMPARISONS and any(m["op"] == "next" for m in F.walk(n)):
+        # 细则 10.3: X (the comparison, primed terms next, the others now). Negated: the strong next.
+        return {"op": "Xcmp", "atom": n, "neg": neg}
+    if op == "next":
+        return nnf(F.node("X", n["args"][0]), neg)
     if op in ("pred", "at", "fails", "struct") or op in F.COMPARISONS:
         return _lit(n, neg)
     if op == "not":
@@ -266,7 +289,8 @@ def is_liveness(tree: dict) -> bool:
         if n["op"] == "Q":
             body = n["node"]["args"][0]
             go(nnf(body, n["neg"]))
-            go(nnf(body, not n["neg"]))
+            if n["node"]["op"] == "exists1":  # its expansion negates the body too
+                go(nnf(body, not n["neg"]))
 
     go(nnf(tree))
     return found
@@ -302,12 +326,29 @@ def _junction(op: str, items: list[dict]) -> dict:
 
 
 def _later(kind: str, n: dict) -> dict:
-    """An obligation on the next state: weak (holds if the trace ends) or strong (fails if it ends)."""
-    if n["op"] == "T":
+    """An obligation on the next state: weak (holds if the trace ends) or strong (fails if it ends).
+
+    Only Wk(⊤) = ⊤ and St(⊥) = ⊥ are equivalences on finite traces; Wk(⊥) and St(⊤) stay (细则 13.2).
+    """
+    if n["op"] == "T" and kind == "Wk":
         return TRUE
     if n["op"] == "⊥" and kind == "St":
         return FALSE
     return {"op": kind, "args": [n]}
+
+
+def _now_values(n: dict, tr: Trace, k: int, primed: bool = False) -> dict:
+    """A primed comparison with its unprimed terms replaced by their values at state k (细则 10.3)."""
+    op = n["op"]
+    if op == "next":
+        if primed or any(m["op"] == "next" for m in F.walk(n["args"][0])):
+            raise AlignError("′ 不能叠用")
+        return _now_values(n["args"][0], tr, k, True)
+    if op in F.COMPARISONS or op in F.ARITHMETIC:
+        return {**n, "args": [_now_values(a, tr, k, primed) for a in n["args"]]}
+    if primed or op in ("lit", "ind"):
+        return n
+    return F.lit(term_value(n, tr, k))
 
 
 def progress(n: dict, tr: Trace, k: int) -> dict:
@@ -318,10 +359,9 @@ def progress(n: dict, tr: Trace, k: int) -> dict:
         return TRUE if atom_value(n["atom"], tr, k) != n["neg"] else FALSE
     if op == "Xcmp":
         try:
-            c = term_value(n["R"], tr, k)
-            atom = F.node(n["cmp"], n["L"], F.lit(c))
+            atom = _now_values(n["atom"], tr, k)
         except _Absent:
-            atom = F.lit(False)
+            atom = F.lit(False)  # 细则 10.3, 12.3: false at the next state, if there is one
         return _later("St" if n["neg"] else "Wk", nnf(atom, n["neg"]))
     if op in ("and", "or"):
         return _junction(op, [progress(a, tr, k) for a in n["args"]])
@@ -378,7 +418,9 @@ def finish(n: dict) -> bool:
     raise AlignError(f"残余公式中不应有 {op}")
 
 
-def judge(tree: dict, states: list[dict], entities: set[str], max_states: int | None = None) -> dict:
+def judge(
+    tree: dict, states: list[dict], entities: set[str], max_states: int | None = None, deadline: float | None = None
+) -> dict:
     """Judge one proposition on one trace. Raises AlignError when the trace cannot be used."""
     if not states:
         raise AlignError("轨迹为空（细则 12.6）")
@@ -386,15 +428,20 @@ def judge(tree: dict, states: list[dict], entities: set[str], max_states: int | 
     if max_states is not None and len(states) > max_states:
         states, truncated = states[:max_states], True
     tr = Trace(states, entities)
-    _require_keys(tree, tr)
     cls = F.classify(tree)
     if cls == "结构":
         raise AlignError("结构命题不能用 trace 检查（细则 11.4）")
+    atoms = [a for a in _static_atoms(tree, []) if a["name"] not in tr.entities]
     if cls == "具体事实":
+        _require_keys(atoms, tr, 0)
         ok = holds(tree, tr, 0)
         return {"result": PASSED if ok else CHECK_FAILED, "state": 0, "truncated": truncated}
     residual = nnf(tree)
     for k in range(len(tr)):
+        # 细则 12.3: a missing key fails the alignment, unless the result was decided before it.
+        _require_keys(atoms, tr, k)
+        if deadline is not None and time.monotonic() > deadline:
+            raise AlignError(f"判定在第 {k} 个状态超时，公式可能嵌套过深（细则 11.8）")
         residual = progress(residual, tr, k)
         if residual["op"] in ("T", "⊥"):
             return {"result": SATISFIED if residual["op"] == "T" else VIOLATED, "state": k, "truncated": truncated}
@@ -418,14 +465,49 @@ def _static_atoms(n: dict, out: list[dict]) -> list[dict]:
     return out
 
 
-def _require_keys(tree: dict, tr: Trace) -> None:
-    """细则 12.3: every state gives every key the formula uses, whether or not evaluation reaches it."""
-    atoms = [a for a in _static_atoms(tree, []) if a["name"] not in tr.entities]
-    for k in range(len(tr)):
-        for a in atoms:
-            ids = [_ind(x, tr, k) for x in a["args"]]
-            if all(tr.present(k, i) for i in ids):
-                tr.value(k, _key(a["name"], ids))
+def _require_keys(atoms: list[dict], tr: Trace, k: int) -> None:
+    """细则 12.3: state k gives every key the formula uses, whether or not evaluation reaches it."""
+    for a in atoms:
+        ids = [_ind(x, tr, k) for x in a["args"]]
+        if all(tr.present(k, i) for i in ids):
+            tr.value(k, _key(a["name"], ids))
+
+
+def _trigger(tree: dict) -> tuple[dict, list[dict]] | None:
+    """The antecedent P and the quantifiers of [∀x] G [∀x] (P → …), or None for any other shape."""
+    quantifiers, n, always = [], tree, False
+    while n["op"] == "forall" or (n["op"] == "G" and not always):
+        if n["op"] == "G":
+            always = True
+        else:
+            quantifiers.append(n)
+        n = n["args"][0]
+    if not always or n["op"] != "implies":
+        return None
+    antecedent = n["args"][0]
+    if any(m["op"] in F.TEMPORAL_OPS or m["op"] in ("next", "at") for m in F.walk(antecedent)):
+        return None
+    return antecedent, quantifiers
+
+
+def triggered(tree: dict, states: list[dict], entities: set[str]) -> bool | None:
+    """细则 13.7: did P of G(P → …) ever hold on this trace? None when that cannot be said."""
+    shape = _trigger(tree)
+    if shape is None:
+        return None
+    antecedent, quantifiers = shape
+    tr = Trace(states, entities)
+
+    def fires(n: dict, rest: list[dict], k: int) -> bool:
+        if not rest:
+            return holds(n, tr, k)
+        q = rest[0]
+        return any(fires(subst(n, q["var"], i), rest[1:], k) for i in tr.individuals(k, q.get("type")))
+
+    try:
+        return any(fires(antecedent, quantifiers, k) for k in range(len(states)))
+    except AlignError:
+        return None
 
 
 def scenario_matches(tree: dict, states: list[dict], entities: set[str]) -> bool:

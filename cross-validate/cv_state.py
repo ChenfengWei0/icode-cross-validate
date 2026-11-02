@@ -99,6 +99,8 @@ def tree_digests(root: Path, skip: tuple[str, ...] = (".git",)) -> dict[str, str
     root = Path(root)
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = sorted(d for d in dirnames if d not in skip and d != "__pycache__")
+        # Links to directories are recorded by target too; os.walk does not descend into them.
+        filenames = [*filenames, *(d for d in dirnames if (Path(dirpath) / d).is_symlink())]
         for name in sorted(filenames):
             path = Path(dirpath) / name
             rel = path.relative_to(root).as_posix()
@@ -126,32 +128,46 @@ def compare_trees(before: dict[str, str], after: dict[str, str]) -> dict[str, li
     }
 
 
-# 细则 5.2: what is frozen after each stage.
+# 细则 5.2: what is frozen after each stage. The digests travel in the workflow state; digests.json
+# in the run directory is only a copy for reading, since the alignment agent can write there.
 FROZEN = {
-    "requirement": ["requirement.json", "requirement.txt"],
+    "requirement": ["requirement.json", "requirement.txt", "run.json"],
     "propositions": ["propositions.json"],
+    "align_start": ["w-before.json"],
     "checks": ["align/checks.frozen.json"],
+    "results": ["results.json"],
 }
+ALIGN_TREE = "align/"
+WORKFLOW = "workflow"
 
 
-def record_digests(run: Path, stage: str, extra: dict[str, str] | None = None) -> None:
-    digests = read_json(run / "digests.json", {})
+def record_digests(run: Path, stage: str, digests: dict, extra: dict | None = None) -> dict:
+    """Add the digests of `stage` to `digests` (the copy in the workflow state) and return it."""
+    digests = dict(digests or {})
     for rel in FROZEN[stage]:
-        if (run / rel).exists():
-            digests[rel] = sha256_file(run / rel)
+        digests[rel] = sha256_file(run / rel) if (run / rel).is_file() else None
+    if stage == "checks":
+        tree = tree_digests(run / "align")
+        digests[ALIGN_TREE] = {rel: d for rel, d in tree.items() if rel != "checks.frozen.json"}
     digests.update(extra or {})
     write_json(run / "digests.json", digests)
+    return digests
 
 
-def verify_digests(run: Path, workflow_dir: Path | None) -> list[str]:
-    """Files whose digest changed since they were frozen."""
+def verify_digests(run: Path, digests: dict, workflow_dir: Path | None) -> tuple[list[str], list[str]]:
+    """Frozen files that changed or vanished (fail closed), and files added to align/ (only listed)."""
     changed: list[str] = []
-    for rel, digest in (read_json(run / "digests.json", {}) or {}).items():
-        if rel == "workflow":
+    added: list[str] = []
+    for rel, digest in (digests or {}).items():
+        if rel == WORKFLOW:
             if workflow_dir is None or folder_digest(workflow_dir) != digest:
                 changed.append("工作流文件夹")
-            continue
-        path = run / rel
-        if not path.exists() or sha256_file(path) != digest:
-            changed.append(rel)
-    return changed
+        elif rel == ALIGN_TREE:
+            diff = compare_trees(digest, tree_digests(run / "align"))
+            changed.extend("align/" + f for f in diff["modified"] + diff["deleted"])
+            added.extend("align/" + f for f in diff["added"] if f != "checks.frozen.json")
+        else:
+            path = run / rel
+            if digest is None or not path.is_file() or path.is_symlink() or sha256_file(path) != digest:
+                changed.append(rel)
+    return changed, added

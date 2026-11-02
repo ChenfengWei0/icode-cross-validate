@@ -28,6 +28,8 @@ COMPARISONS = {"eq": "=", "ne": "≠", "lt": "<", "gt": ">", "le": "≤", "ge": 
 ARITHMETIC = {"add": "+", "sub": "−", "mul": "×", "div": "÷"}
 QUANTIFIERS = {"exists": "∃", "exists1": "∃!", "forall": "∀"}
 VARIABLE = re.compile(r"[a-z][0-9]?")
+# 细则 9.1 第 3 项: the arity of each structure predicate.
+STRUCT_ARITY = {"exists": 1, "represents": 1, "signature": 2, "contains": 2, "calls": 2, "only": 2}
 
 
 class FormulaError(ValueError):
@@ -208,7 +210,7 @@ def _formula(n: dict, ctx: int) -> str:
             text = f"签名({_expr(n['args'][0])}) = {_expr(n['args'][1])}"
             return f"({text})" if ctx > 5 else text
         return f"{STRUCT_PRINT[kind]}({', '.join(_expr(a) for a in n['args'])})"
-    if op in ("pred", "fails", "at"):
+    if op in ("pred", "fails", "at", "next"):
         text = _expr(n)
         return f"({text})" if op == "at" and ctx > 5 and n["args"][0]["op"] != "pred" else text
     if op == "lit" and isinstance(n["value"], bool):
@@ -275,7 +277,9 @@ _SINGLE = {
 }
 _ASCII_PAIRS = {"->": "→", "<=": "≤", ">=": "≥", "!=": "≠"}
 _STOP = set(_SINGLE) | set("「」`[]{}∃- \t\n") | set(SUBSCRIPTS)
-_NUMBER = re.compile(r"-?\d+(?:\.\d+)?")
+# 细则 8.1: ASCII decimals, no superfluous leading zeros, at most 30 integer digits.
+_NUMBER = re.compile(r"-?(?:0|[1-9][0-9]{0,29})(?:\.[0-9]+)?(?![0-9])", re.ASCII)
+_PREFIX_OPS = ("U", "W", "G", "F", "X")
 
 
 @dataclass
@@ -307,6 +311,14 @@ def _scan_json(s: str, i: int) -> int:
     raise FormulaError("括号不配对")
 
 
+def _after_quantifier_head(out: list[Tok]) -> bool:
+    """Just after `∃x` or `∃x:T`: what follows starts a formula, so `-1` is a number (细则 10.2)."""
+    quant = ("∃", "∃!", "∀")
+    if len(out) >= 2 and out[-2].kind == "sym" and out[-2].text in quant:
+        return True
+    return len(out) >= 4 and out[-2].text == ":" and out[-4].kind == "sym" and out[-4].text in quant
+
+
 def tokenize(s: str, decls: Decls) -> list[Tok]:
     out: list[Tok] = []
     i = 0
@@ -327,7 +339,12 @@ def tokenize(s: str, decls: Decls) -> list[Tok]:
         elif (
             c == "-"
             and (m := _NUMBER.match(s, i))
-            and (not out or (out[-1].kind == "sym" and out[-1].text not in (")", "′")))
+            and (
+                not out
+                or (out[-1].kind == "sym" and out[-1].text not in (")", "′"))
+                or (out[-1].kind == "ident" and out[-1].text in _PREFIX_OPS)
+                or _after_quantifier_head(out)
+            )
         ):
             out.append(Tok("num", m.group(), json.loads(m.group())))
             i = m.end()
@@ -366,7 +383,9 @@ def tokenize(s: str, decls: Decls) -> list[Tok]:
                 raise FormulaError(f"JSON 字面量不合法：{s[i:j]}") from e
             i = j
         elif c.isdigit():
-            m = _NUMBER.match(s, i)
+            m = _NUMBER.match(s, i) if c in "0123456789" else None
+            if m is None:
+                raise FormulaError(f"数的写法不合法：{s[i : i + 12]}（细则 8.1：ASCII 数字，不带多余的前导零）")
             out.append(Tok("num", m.group(), json.loads(m.group())))
             i = m.end()
         else:
@@ -487,7 +506,9 @@ class _Parser:
                     raise FormulaError("签名只能写作 签名(`N`) = 「…」")
                 return node("struct", left["args"][0], right, kind="signature")
             return node(op, left, right)
-        if left["op"] in ("pred", "struct", "fails") or (left["op"] == "at" and left["args"][0]["op"] == "pred"):
+        if left["op"] in ("pred", "struct", "fails") or (
+            left["op"] in ("at", "next") and left["args"][0]["op"] == "pred"
+        ):
             return left
         if left["op"] == "lit" and isinstance(left["value"], bool):
             return left
@@ -557,6 +578,9 @@ class _Parser:
             args = self.args()
             if name in STRUCT_NAMES and self.d.kind(name) is None:
                 kind = STRUCT_NAMES[name]
+                want = STRUCT_ARITY[kind] - (1 if kind == "signature" else 0)
+                if len(args) != want:
+                    raise FormulaError(f"{name}(…) 应有 {want} 个参数")
                 return node("sig", *args) if kind == "signature" else node("struct", *args, kind=kind)
             if name == "失败" and self.d.kind(name) is None:
                 if len(args) != 1 or args[0]["op"] != "call":
@@ -584,8 +608,11 @@ class _Parser:
 
 def parse(text: str, decls: Decls) -> dict:
     """Parse a formula written in the document's notation, or its ASCII spelling (细则 10.1)."""
-    p = _Parser(tokenize(text.strip().rstrip("。"), decls), decls)
-    out = p.formula()
+    try:
+        p = _Parser(tokenize(text.strip().rstrip("。"), decls), decls)
+        out = p.formula()
+    except RecursionError as e:
+        raise FormulaError("公式嵌套过深") from e
     if p.peek() is not None:
         raise FormulaError(f"多余的内容：{p.peek().text}")
     return out
@@ -615,12 +642,51 @@ def type_errors(n: dict, decls: Decls) -> list[str]:
         else:
             errors.append(f"{where} 的参数应是 {want} 的个体")
 
+    def struct_ok(m: dict) -> bool:
+        kind, args = m["kind"], m["args"]
+        name = STRUCT_PRINT[kind]
+        if len(args) != STRUCT_ARITY[kind]:
+            errors.append(f"{name}(…) 应有 {STRUCT_ARITY[kind]} 个参数，写了 {len(args)} 个")
+            return False
+        codes = {"exists": [0], "contains": [0, 1], "calls": [0, 1], "only": [0], "signature": [0]}.get(kind, [])
+        for i in codes:
+            if args[i]["op"] != "code":
+                errors.append(f"{name}(…) 的第 {i + 1} 个参数应是反引号括起的代码名")
+                return False
+        if kind == "only" and (args[1]["op"] not in ("code", "term") or args[1].get("name") == ACTION):
+            errors.append("只由(M, D)：D 应是代码名或已声明的位置、数量")
+            return False
+        if kind == "represents" and not (
+            args[0]["op"] in ("term", "const") or (args[0]["op"] == "pred" and not args[0]["args"])
+        ):
+            errors.append("表示(C)：C 应是已声明的名称或项")
+            return False
+        if kind == "signature" and not (args[1]["op"] == "lit" and isinstance(args[1]["value"], str)):
+            errors.append("签名(`N`) 只能等于一个「」字符串")
+            return False
+        return True
+
     def go(m: dict) -> None:
         op = m["op"]
+        if op == "struct" and not struct_ok(m):
+            return
         if op == "struct" and m["kind"] == "represents" and m["args"][0]["op"] == "pred" and not m["args"][0]["args"]:
             if decls.kind(m["args"][0]["name"]) != "谓词":
                 errors.append(f"未声明的名称：{m['args'][0]['name']}")
             return
+        if op == "var" and m["name"] in types and types[m["name"]] is None:
+            errors.append(f"变量 {m['name']} 没有类型，只能用在 {m['name']} 是 T 中（细则 8.7）")
+            return
+        if op == "next" and any(x["op"] == "next" for x in walk(m["args"][0])):
+            errors.append("′ 不能叠用（细则 10.3）")
+        if op in COMPARISONS or op in ARITHMETIC:
+            for a in m["args"]:
+                inner = a
+                while inner["op"] in ("next", "at"):
+                    inner = inner["args"][0]
+                if inner["op"] in ("pred", "struct", "fails"):
+                    name = "结构谓词" if inner["op"] == "struct" else _expr(inner)
+                    errors.append(f"{name} 是命题，不能当作项比较或计算")
         if op in QUANTIFIERS:
             if m.get("type") and decls.kind(m["type"]) != "实体":
                 errors.append(f"量词的类型 {m['type']} 不是已声明的实体")

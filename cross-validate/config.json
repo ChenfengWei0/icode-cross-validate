@@ -5,7 +5,7 @@
   "subtask_model": null,
   "align_profile": "cv-align",
   "align_model": null,
-  "agent_timeout": 1800,
+  "agent_timeout": 3600,
   "check_timeout": 120,
   "max_runs": 200,
   "max_states": 10000,

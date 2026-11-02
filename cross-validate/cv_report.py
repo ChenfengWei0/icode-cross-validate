@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 from pathlib import Path
@@ -60,10 +61,17 @@ def _rows(props: list[dict], results: dict, forms: dict) -> list[dict]:
     return merged
 
 
+def _plain(text: str, limit: int = 300) -> str:
+    """Untrusted text (program output, bindings) on one line, unable to forge report structure."""
+    one = " ".join(str(text).split())[-limit:]
+    return one.replace("|", "｜").replace("*", "＊").replace("#", "＃").replace("`", "'")
+
+
 def _detail(r: dict) -> str:
     parts = []
     if r.get("reason"):
-        parts.append(r["reason"])
+        parts.append(_plain(r["reason"]))
+    parts.extend(r.get("notes") or [])  # 细则 14.1 第 3 项: timeouts, truncation
     cex = r.get("counterexample")
     if cex:
         if "actions" in cex:
@@ -74,9 +82,9 @@ def _detail(r: dict) -> str:
         elif "state" in cex:
             parts.append(f"反例：第 {cex.get('run')} 次运行，状态 {cex['state']}")
         elif cex.get("stdout"):
-            parts.append("反例：" + cex["stdout"].strip()[-300:])
+            parts.append("反例：" + _plain(cex["stdout"]))
         elif cex.get("stderr") is not None:
-            parts.append(f"程序异常退出（退出码 {cex.get('exit')}）：" + (cex.get("stderr") or "").strip()[-300:])
+            parts.append(f"程序异常退出（退出码 {cex.get('exit')}）：" + _plain(cex.get("stderr") or ""))
     return "；".join(parts)
 
 
@@ -96,8 +104,9 @@ def build(run: Path, extra: dict, config: dict) -> dict:
     discarded = [p for p in props.get("propositions", []) if p.get("problems")]
     forms: dict[str, list[str]] = {}
     for c in frozen.get("checks", []):
-        if c["form"] and c["form"] not in forms.setdefault(c["proposition"], []):
-            forms[c["proposition"]].append(c["form"])
+        form = _plain(c["form"], 40)
+        if form and form not in forms.setdefault(c["proposition"], []):
+            forms[c["proposition"]].append(form)
     submitted = props.get("propositions", [])
     stats = {
         "submitted": len(submitted),
@@ -106,10 +115,12 @@ def build(run: Path, extra: dict, config: dict) -> dict:
         "unpatterned": sum(p.get("pattern") == "未套用句式" for p in submitted),
         "discarded": len(discarded),
         "by_result": {},
+        "vacuous": 0,
     }
     prop_results = results.get("propositions", {})
     for r in prop_results.values():
         stats["by_result"][r["result"]] = stats["by_result"].get(r["result"], 0) + 1
+        stats["vacuous"] += 1 if r.get("vacuous") else 0
     data = {
         "title": TITLE,
         "run": run.name,
@@ -194,7 +205,7 @@ def render(data: dict) -> str:
     if data["bindings"]:
         out.append("## 绑定")
         for name, what in data["bindings"].items():
-            out.append(f"- {name}：{what}")
+            out.append(f"- {_plain(name, 100)}：{_plain(what)}")
         out.append("")
     s = data["stats"]
     out.append("## 统计")
@@ -205,6 +216,8 @@ def render(data: dict) -> str:
     if s["by_result"]:
         order = sorted(s["by_result"].items(), key=lambda kv: M.ORDER.get(kv[0], 9))
         out.append("- 结果：" + "，".join(f"{k} {v} 条" for k, v in order))
+    if s.get("vacuous"):
+        out.append(f"- 其中前件从未成立、实际没有被检验 {s['vacuous']} 条（细则 13.7）")
     out.append("")
     if data["notes"]:
         out.append("## 注")
@@ -222,6 +235,17 @@ def render(data: dict) -> str:
         "交叉验证不能确保命题与需求的语义一致，只让通过检查的代码与需求对齐的概率更高。"
     )
     return "\n".join(out) + "\n"
+
+
+def write_minimal(run: Path, reason: str) -> str:
+    """细则 4.8: when the report itself cannot be built, a short one with no conclusion and the reason."""
+    text = f"# {TITLE}\n\n## 比对结论\n**{NO_CONCLUSION}**：{reason}。\n"
+    with contextlib.suppress(OSError):
+        S.write_text(Path(run) / "report.md", text)
+        S.write_json(
+            Path(run) / "report.json", {"title": TITLE, "conclusion": NO_CONCLUSION, "conclusion_reason": reason}
+        )
+    return text
 
 
 def write(run: Path, extra: dict, config: dict) -> str:

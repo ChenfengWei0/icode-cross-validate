@@ -29,6 +29,8 @@ def run(variant: str, home: Path) -> Path:
     installed = S.global_workflow_dir()
     if not installed.exists():
         shutil.copytree(ROOT / "cross-validate", installed, ignore=shutil.ignore_patterns("__pycache__"))
+        # What cv install records; the workflow refuses to run without it (细则 5.1).
+        S.write_json(S.ensure_private(S.cv_home()) / "install.json", {"workflow_digest": S.folder_digest(installed)})
     w = home / "work" / variant
     shutil.copytree(HERE / variant, w, ignore=shutil.ignore_patterns("__pycache__"))
     config = FLOW.load_config()

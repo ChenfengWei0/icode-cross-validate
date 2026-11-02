@@ -9,6 +9,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+import stat
 import subprocess
 from pathlib import Path
 
@@ -56,11 +57,18 @@ def _invalid(state: dict, text: str) -> None:
 # ---------------------------------------------------------------------------------------------------
 
 
-def check_installed(workflow_dir: Path) -> None:
-    """细则 5.1: only the globally installed copy may run; a project copy would shadow it."""
+def check_installed(workflow_dir: Path) -> str:
+    """细则 5.1: only the globally installed copy may run, unchanged since `cv install`. Returns its digest."""
     installed = S.global_workflow_dir().resolve()
     if Path(workflow_dir).resolve() != installed:
         raise RuntimeError(f"交叉验证工作流必须从全局目录 {installed} 运行，当前运行的是 {workflow_dir}（细则 5.1）")
+    record = S.read_json(S.cv_home() / "install.json", {}) or {}
+    digest = S.folder_digest(installed)
+    if not record.get("workflow_digest"):
+        raise RuntimeError("没有安装记录 install.json，请用 cv install 安装（细则 5.1）")
+    if record["workflow_digest"] != digest:
+        raise RuntimeError("安装后的工作流文件夹被改动过，请重新运行 cv install（细则 5.1）")
+    return digest
 
 
 def code_version(w: Path) -> dict:
@@ -68,7 +76,15 @@ def code_version(w: Path) -> dict:
 
     def git(*args: str) -> str | None:
         try:
-            out = subprocess.run(["git", *args], cwd=w, capture_output=True, text=True, timeout=30, check=False)
+            out = subprocess.run(
+                ["git", *args],
+                cwd=w,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+                env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"},
+            )
         except (OSError, subprocess.TimeoutExpired):
             return None
         return out.stdout.strip() if out.returncode == 0 else None
@@ -79,14 +95,14 @@ def code_version(w: Path) -> dict:
         return {
             "version": ("git 仓库，尚无提交" if inside else "不是 git 仓库") + "，文件摘要 " + S.folder_digest(w)[:12]
         }
-    dirty = git("status", "--porcelain")
+    dirty = git("--no-optional-locks", "status", "--porcelain")  # 细则 16.4: never touch the project's .git
     if dirty:
         return {"version": f"提交 {head}（含未提交改动：{len(dirty.splitlines())} 个文件）"}
     return {"version": f"提交 {head}"}
 
 
 def intake(text: str, cwd: str, workflow_dir: Path) -> dict:
-    check_installed(workflow_dir)
+    digests = {S.WORKFLOW: check_installed(workflow_dir)}
     cwd = os.path.realpath(cwd)
     if text.startswith(RUN_PREFIX):
         run = Path(text[len(RUN_PREFIX) :].strip()).resolve()
@@ -96,7 +112,14 @@ def intake(text: str, cwd: str, workflow_dir: Path) -> dict:
             raise RuntimeError(f"{run} 不是任何已启用项目的运行目录（细则 4.1）")
         if os.path.realpath(info.get("snapshot", "")) != cwd:
             raise RuntimeError("积累模式必须在启动器做的快照中运行（细则 4.3）")
-        return {"run": str(run), "mode": MODE_ACCUM, "w": cwd, "started": _now(), "workflow_dir": str(workflow_dir)}
+        return {
+            "run": str(run),
+            "mode": MODE_ACCUM,
+            "w": cwd,
+            "started": _now(),
+            "workflow_dir": str(workflow_dir),
+            "digests": digests,
+        }
     if not text.strip():
         raise RuntimeError("目标为空：请输入要实现的目标，它同时是交叉验证的需求")
     run = S.create_run(cwd)
@@ -105,7 +128,14 @@ def intake(text: str, cwd: str, workflow_dir: Path) -> dict:
         {"mode": MODE_GOAL, "trigger": "目标模式", "project": cwd, "snapshot": None, "started": _now()},
     )
     S.write_text(run / "goal.txt", text)
-    return {"run": str(run), "mode": MODE_GOAL, "w": cwd, "started": _now(), "workflow_dir": str(workflow_dir)}
+    return {
+        "run": str(run),
+        "mode": MODE_GOAL,
+        "w": cwd,
+        "started": _now(),
+        "workflow_dir": str(workflow_dir),
+        "digests": digests,
+    }
 
 
 def after_implement(state: dict) -> dict:
@@ -118,7 +148,7 @@ def after_implement(state: dict) -> dict:
     req, txt = L.build_requirement([{"text": goal, "quotes": [{"from": "目标", "text": goal}]}], {}, MODE_GOAL)
     S.write_json(run / "requirement.json", req)
     S.write_text(run / "requirement.txt", txt)
-    S.record_digests(run, "requirement")
+    state["digests"] = S.record_digests(run, "requirement", state.get("digests"))
     return state
 
 
@@ -130,7 +160,11 @@ def after_implement(state: dict) -> dict:
 def violations(state: dict) -> list[dict]:
     found = _lines(Path(state["run"]) / "tool-violations.jsonl")
     for line in _lines(S.cv_home() / "tool-violations.jsonl"):
-        if os.path.realpath(line.get("cwd", "")) == state["w"] and line.get("time", "") >= state["started"]:
+        cwd, when = line.get("cwd"), line.get("time")
+        if not isinstance(when, str) or when < state["started"]:
+            continue
+        # A record without a usable cwd cannot be placed; it counts against every run (fail closed).
+        if not isinstance(cwd, str) or os.path.realpath(cwd) == state["w"]:
             found.append(line)
     return found
 
@@ -146,6 +180,18 @@ def _parse_line(raw: str) -> dict:
         return json.loads(raw)
     except json.JSONDecodeError:
         return {"raw": raw}
+
+
+def history_reads(state: dict) -> int:
+    """细则 5.6: blocked tool calls that touched the state directory during this run, from its W."""
+    return sum(
+        1
+        for line in _lines(S.cv_home() / "history-reads.jsonl")
+        if isinstance(line.get("time"), str)
+        and line["time"] >= state["started"]
+        and isinstance(line.get("cwd"), str)
+        and os.path.realpath(line["cwd"]) == state["w"]
+    )
 
 
 def check_violations(state: dict) -> None:
@@ -165,9 +211,15 @@ def consolidate_prompt(state: dict) -> str:
     return prompt("consolidate", MESSAGES=L.consolidation_input(messages))
 
 
-def consolidate_check(state: dict, answer: str, attempt: int) -> tuple[dict, str | None]:
+NO_ANSWER = "子任务 agent 没有回答"
+
+
+def consolidate_check(state: dict, answer: str | None, attempt: int) -> tuple[dict, str | None]:
     run = Path(state["run"])
     check_violations(state)
+    if answer is None:  # 细则 4.8
+        state["stopped"] = f"需求整理：{NO_ANSWER}（细则 4.8）"
+        return state, None
     S.write_text(run / f"consolidate-{attempt}.txt", answer)
     messages = L.read_messages(run / "ledger.jsonl")
     data, errors = L.check_consolidation(answer, messages)
@@ -182,7 +234,7 @@ def consolidate_check(state: dict, answer: str, attempt: int) -> tuple[dict, str
     req["preprocessed"] = [m["id"] for m in messages if m.get("replaced")]
     S.write_json(run / "requirement.json", req)
     S.write_text(run / "requirement.txt", txt)
-    S.record_digests(run, "requirement")
+    state["digests"] = S.record_digests(run, "requirement", state.get("digests"))
     if req["preprocessed"]:
         _note(state, f"预处理替换了消息 {'、'.join(req['preprocessed'])} 中粘贴的代码、日志或路径（细则 15.3）")
     return state, None
@@ -201,11 +253,16 @@ def split_prompt(state: dict) -> str:
     return prompt("split", REQUIREMENT=(Path(state["run"]) / "requirement.txt").read_text(encoding="utf-8"))
 
 
-def split_check(state: dict, answer: str, attempt: int) -> tuple[dict, str | None]:  # 算法1 第1行
+def split_check(state: dict, answer: str | None, attempt: int) -> tuple[dict, str | None]:  # 算法1 第1行
     run = Path(state["run"])
     check_violations(state)
     requirement = (run / "requirement.txt").read_text(encoding="utf-8")
-    sentences, errors = T.check_split(answer, requirement)
+    if answer is None:
+        _note(state, f"切句：{NO_ANSWER}（细则 4.8）")
+        sentences, errors = [], [NO_ANSWER]
+        attempt = 2
+    else:
+        sentences, errors = T.check_split(answer, requirement)
     if errors and attempt == 1:
         return state, prompt(
             "revise", WHAT="切句与分类", ERRORS=_bullets(errors), PREVIOUS=answer, TASK=split_prompt(state)
@@ -245,15 +302,23 @@ def _original(run: Path) -> str:
     return "\n".join(q["text"] for e in req["entries"] for q in e["quotes"])
 
 
-def propose_check(state: dict, answer: str, attempt: int) -> tuple[dict, str | None]:  # 算法1 第4行；算法1 第5行
+def propose_check(state: dict, answer: str | None, attempt: int) -> tuple[dict, str | None]:  # 算法1 第4行；算法1 第5行
     run = Path(state["run"])
     check_violations(state)
+    revising = state.get("revising")
+    if answer is None:  # 细则 4.8
+        _note(state, f"命题：{NO_ANSWER}（细则 4.8）")
+        if revising == "propositions":
+            state["digests"] = S.record_digests(run, "propositions", state.get("digests"))
+        else:
+            state["stopped"] = f"命题：{NO_ANSWER}（细则 4.8）"
+        return state, None
     S.write_text(run / ("subtask.txt" if attempt == 1 else "subtask-revised.txt"), answer)
     sentences = S.read_json(run / "sentences.json")
     original = _original(run)
     parsed = T.parse_subtask(answer, original)
-    if attempt == 2 and state.get("revising") == "propositions":
-        parsed = _merge_revision(run, parsed)
+    if attempt == 2 and revising == "propositions":
+        parsed = _merge_revision(state, run, parsed, original)
     if parsed["errors"]:
         if attempt == 1:
             state["revising"] = "all"
@@ -268,34 +333,56 @@ def propose_check(state: dict, answer: str, attempt: int) -> tuple[dict, str | N
     if bad and attempt == 1:
         state["revising"] = "propositions"
         _save_propositions(run, parsed, checked)
-        listing = "\n\n".join(f"{p['id']}　{p['sentence']}\n" + _bullets(p["problems"]) for p in bad)
+        listing = "\n\n".join(f"{p['id'] or '（无编号）'}　{p['sentence']}\n" + _bullets(p["problems"]) for p in bad)
         return state, prompt("revise_propositions", PROBLEMS=listing, PREVIOUS=answer, TASK=propose_prompt(state))
     _save_propositions(run, parsed, checked)
-    S.record_digests(run, "propositions")
+    state["digests"] = S.record_digests(run, "propositions", state.get("digests"))
     return state, None
 
 
-def _merge_revision(run: Path, revised: dict) -> dict:
-    """细则 9.3: keep the first output; take only the rewritten propositions and new declarations."""
+def _merge_revision(state: dict, run: Path, revised: dict, original: str) -> dict:
+    """细则 9.3: keep what passed; replace what failed by the rewritten propositions; check new names."""
     first = S.read_json(run / "propositions.json")
     decls = Decls.from_json(first["decls"])
-    for name, cat in revised["decls"].category.items():
-        if name not in decls.category:
-            decls.category[name] = cat
-            decls.params[name] = revised["decls"].params[name]
-            decls.meaning[name] = revised["decls"].meaning[name]
-    bad_ids = {p["id"] for p in first["propositions"] if p["problems"]}
-    raw = {p["编号"]: p for p in first["raw"]}
-    for p in revised["propositions"]:
-        if p.get("编号") in bad_ids:
-            raw[p["编号"]] = p
-    return {
-        "decls": decls,
-        "checklist": first["checklist"],
-        "propositions": list(raw.values()),
-        "errors": [],
-        "block_errors": [],
-    }
+    added = [n for n in revised["decls"].category if n not in decls.category]
+    if added:
+        trial = Decls.from_json(decls.to_json())
+        for name in added:
+            trial.category[name] = revised["decls"].category[name]
+            trial.params[name] = revised["decls"].params[name]
+            trial.meaning[name] = revised["decls"].meaning[name]
+        for name in added:
+            problems = T.declaration_problems(name, trial, original)
+            if problems:
+                _note(state, f"重写中新增的声明 {name} 不合格，没有加入：{'；'.join(problems)}（细则 9.3）")
+                continue
+            decls.category[name] = trial.category[name]
+            decls.params[name] = trial.params[name]
+            decls.meaning[name] = trial.meaning[name]
+    # Keep what passed; every other id is taken from the rewrite as a whole, so duplicates and
+    # renumbered blocks map by the agent's own numbering. Failed ids the rewrite leaves out stay failed.
+    passed = {p["id"] for p in first["propositions"] if not p["problems"]}
+    rewritten = [p for p in revised["propositions"] if p.get("编号", "") and p.get("编号") not in passed]
+    named = {p["编号"] for p in rewritten}
+    first_ids = {p.get("编号", "") for p in first["raw"]}
+    renumbered = bool(named - first_ids)
+    merged = [
+        old
+        for old, checked in zip(first["raw"], first["propositions"], strict=True)
+        if (not checked["problems"] and old.get("编号") in passed)
+        or (checked["problems"] and old.get("编号", "") not in named and not (old.get("编号", "") == "" and renumbered))
+    ]
+    # A failed block whose sentence reappears under a new id was renumbered (e.g. one of two R1s): drop it.
+    moved = {p.get("句子", "").strip() for p in rewritten if p["编号"] not in first_ids}
+    failed = {id(old) for old, checked in zip(first["raw"], first["propositions"], strict=True) if checked["problems"]}
+    merged = [old for old in merged if not (id(old) in failed and old.get("句子", "").strip() in moved)]
+    merged += rewritten
+    # 细则 9.3: a renumbered reasoning proposition needs its id in the checklist; take both checklists.
+    checklist = {k: dict(v) for k, v in first["checklist"].items()}
+    for item, entry in revised["checklist"].items():
+        if item in checklist and entry["ids"]:
+            checklist[item]["ids"] = sorted(set(checklist[item]["ids"]) | set(entry["ids"]))
+    return {"decls": decls, "checklist": checklist, "propositions": merged, "errors": [], "block_errors": []}
 
 
 def _save_propositions(run: Path, parsed: dict, checked: list[dict]) -> None:
@@ -339,6 +426,8 @@ def align_prompt(state: dict) -> str:  # 算法1 第6行
     listing = "\n".join(f"{p['id']}  〔{p['class']}〕  {p['sentence']}\n      公式  {p['formula']}" for p in props)
     S.ensure_private(run / "align")
     S.write_json(run / "w-before.json", S.tree_digests(Path(state["w"])))
+    # 细则 5.2, 5.4: frozen before the alignment agent starts, not after it has run.
+    state["digests"] = S.record_digests(run, "align_start", state.get("digests"))
     return prompt(
         "align",
         DECLS=_decl_text(Decls.from_json(data["decls"])),
@@ -348,19 +437,23 @@ def align_prompt(state: dict) -> str:  # 算法1 第6行
     )
 
 
-def align_check(state: dict, answer: str, attempt: int, config: dict) -> tuple[dict, str | None]:
+def align_check(state: dict, answer: str | None, attempt: int, config: dict) -> tuple[dict, str | None]:
     run = Path(state["run"])
-    S.write_text(run / f"align-answer-{attempt}.txt", answer)
     props = {p["id"]: p for p in _accepted(run)}
-    data, error = A.load(run / "align")
-    result = A.validate(data, props, config) if error is None else {"format_errors": [error]}
-    if result["format_errors"] and attempt == 1:
-        return state, prompt("align_fix", ERRORS=_bullets(result["format_errors"]), ALIGN=str(run / "align"))
-    if result["format_errors"]:
-        why = "checks.json 格式不合法：" + "；".join(result["format_errors"][:3])
-        result = {"checks": [], "bindings": {}, "align_failures": dict.fromkeys(props, why)}
+    if answer is None:  # 细则 4.8, 11.6
+        _note(state, "对齐 agent 没有回答，所有命题记为对齐失败（细则 4.8）")
+        result = {"checks": [], "bindings": {}, "align_failures": dict.fromkeys(props, "对齐 agent 没有回答")}
+    else:
+        S.write_text(run / f"align-answer-{attempt}.txt", answer)
+        data, error = A.load(run / "align")
+        result = A.validate(data, props, config) if error is None else {"format_errors": [error]}
+        if result["format_errors"] and attempt == 1:
+            return state, prompt("align_fix", ERRORS=_bullets(result["format_errors"]), ALIGN=str(run / "align"))
+        if result["format_errors"]:
+            why = "checks.json 格式不合法：" + "；".join(result["format_errors"][:3])
+            result = {"checks": [], "bindings": {}, "align_failures": dict.fromkeys(props, why)}
     A.freeze(run, result)
-    S.record_digests(run, "checks", {"workflow": S.folder_digest(Path(state["workflow_dir"]))})
+    state["digests"] = S.record_digests(run, "checks", state.get("digests"))
     return state, None
 
 
@@ -370,12 +463,19 @@ def align_check(state: dict, answer: str, attempt: int, config: dict) -> tuple[d
 
 
 def _integrity(state: dict) -> None:
+    """细则 5.2, 5.4: compare with the digests carried in the workflow state; anything missing fails."""
     run = Path(state["run"])
-    changed = S.verify_digests(run, Path(state["workflow_dir"]))
+    digests = state.get("digests") or {}
+    changed, added = S.verify_digests(run, digests, Path(state["workflow_dir"]))
     if changed:
-        _invalid(state, f"检查期间被改动：{'、'.join(changed)}（细则 5.2）")
-    before = S.read_json(run / "w-before.json")
-    if before is not None:
+        _invalid(state, f"检查期间被改动或删除：{'、'.join(changed[:10])}（细则 5.2）")
+    if added:
+        state["align_added"] = added
+    if "w-before.json" in digests:
+        before = S.read_json(run / "w-before.json")
+        if not isinstance(before, dict):
+            _invalid(state, "w-before.json 缺失或不可读（细则 5.4）")
+            return
         diff = S.compare_trees(before, S.tree_digests(Path(state["w"])))
         if diff["modified"] or diff["deleted"]:
             files = diff["modified"] + diff["deleted"]
@@ -385,8 +485,13 @@ def _integrity(state: dict) -> None:
 
 def run_checks(state: dict, config: dict) -> dict:  # 算法1 第7行
     run = Path(state["run"])
-    if state.get("stopped") or not (run / "align" / "checks.frozen.json").exists():
+    if state.get("stopped") or state.get("invalid"):
         return state
+    if not (run / "align" / "checks.frozen.json").exists():
+        if not _accepted(run):
+            return state
+        # 细则 4.8: the alignment stage gave nothing at all; every proposition is an alignment failure.
+        state, _ = align_check(state, None, 2, config)
     _integrity(state)
     if state.get("invalid"):
         return state
@@ -396,6 +501,7 @@ def run_checks(state: dict, config: dict) -> dict:  # 算法1 第7行
     frozen = S.read_json(run / "align" / "checks.frozen.json")
     results = RUN.run_checks(run, Path(state["w"]), props, frozen, entities, config)
     S.write_json(run / "results.json", results)
+    state["digests"] = S.record_digests(run, "results", state.get("digests"))
     _integrity(state)
     return state
 
@@ -414,9 +520,10 @@ def suspect_names(run: Path, w: Path) -> list[str]:
     found: set[str] = set()
     for rel in S.tree_digests(w):
         path = w / rel
-        if path.suffix in (".md", ".txt") or path.stat().st_size > 1 << 20:
-            continue
         try:
+            st = path.lstat()
+            if path.suffix in (".md", ".txt") or not stat.S_ISREG(st.st_mode) or st.st_size > 1 << 20:
+                continue
             text = path.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
             continue
@@ -426,14 +533,33 @@ def suspect_names(run: Path, w: Path) -> list[str]:
 
 def report(state: dict, config: dict) -> str:  # 算法1 第8行
     run = Path(state["run"])
-    check_violations(state)
-    if (run / "align" / "checks.frozen.json").exists():
+    try:
+        check_violations(state)
         _integrity(state)
-    extra = {
-        "invalid": state.get("invalid", []),
-        "stopped": state.get("stopped"),
-        "notes": state.get("notes", []),
-        "w_changes": state.get("w_changes", {}),
-        "suspect_names": suspect_names(run, Path(state["w"])) if (run / "requirement.json").exists() else [],
-    }
-    return RP.write(run, extra, config)
+        notes = list(state.get("notes", []))
+        if state.get("align_added"):
+            notes.append(f"检查期间 align/ 中新增的文件：{'、'.join(state['align_added'][:10])}")
+        blocked = history_reads(state)
+        if blocked:
+            notes.append(f"运行期间有 {blocked} 次访问状态目录的工具调用被拦下（细则 5.6）")
+        extra = {
+            "invalid": state.get("invalid", []),
+            "stopped": state.get("stopped"),
+            "notes": notes,
+            "w_changes": state.get("w_changes", {}),
+            "suspect_names": suspect_names(run, Path(state["w"]))
+            if state.get("mode") == MODE_ACCUM and (run / "requirement.json").exists()
+            else [],
+        }
+        return RP.write(run, extra, config)
+    except Exception as e:  # 细则 4.8: a short report rather than none
+        return RP.write_minimal(run, f"报告节点出错：{type(e).__name__}: {e}")
+
+
+def guarded(name: str, fn, state: dict, *args):
+    """细则 4.8: a program node that fails stops the run with the reason instead of crashing the workflow."""
+    try:
+        return fn(state, *args)
+    except Exception as e:  # 细则 4.8: untrusted input must not crash the node
+        state["stopped"] = f"{name} 节点出错：{type(e).__name__}: {e}"
+        return (state, None) if args else state
