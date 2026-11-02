@@ -12,6 +12,7 @@ from cv_formula import Decls, FormulaError
 UNPATTERNED = "未套用句式"
 ASCII_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]+")
 SUBSCRIPT = re.compile(r"_\d+\b")
+EXCEPTION_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:Error|Exception)(?![A-Za-z0-9_])")
 REASON = re.compile(r"^〔([^〕]+)〕\s*(.+)$")
 CN_DIGIT = {"零": 0, "〇": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
 CN_UNIT = {"十": 10, "百": 100, "千": 1000, "万": 10000}
@@ -165,6 +166,13 @@ def first_state_only(tree: dict, decls: Decls) -> bool:
     )
 
 
+def lost_exceptions(quote: str, sentence: str, formula: str, tree: dict | None, decls: Decls) -> list[str]:
+    """细则 9.1 第 5 项: exception names of the quote that the proposition no longer mentions."""
+    used = [n["name"] for n in F.walk(tree) if n["op"] in ("pred", "term")] if tree else []
+    text = " ".join([sentence, formula, *used, *(decls.meaning.get(n, "") for n in used)])
+    return [name for name in EXCEPTION_NAME.findall(quote) if name not in text]
+
+
 def _parses(sentence: str, decls: Decls) -> bool:
     try:
         G.parse_sentence(sentence, decls)
@@ -274,6 +282,11 @@ def _check(all_parsed: dict, parsed: dict, sentences: list[dict], original: str)
             ):
                 problems.append(f"句式 {pattern} 在引文中没有对应的关键词或标签（细则 9.1 第 5 项）")
             for quote, labels in hosted:
+                if tree is not None:
+                    problems.extend(
+                        f"引文中的异常名 {name} 丢失了：写进谓词的名称或含义，不要抽象掉（细则 9.1 第 5 项）"
+                        for name in lost_exceptions(quote, rec["sentence"], formula_field or "", tree, decls)
+                    )
                 if tree is not None and "示例" in labels:
                     have = quote_numbers(quote)
                     # 细则 9.1 第 5 项: S of 从 S 出发 only selects the runs; it asserts nothing.

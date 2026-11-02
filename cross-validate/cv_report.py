@@ -81,10 +81,11 @@ def _detail(r: dict) -> str:
             parts.append(f"反例：第 {cex.get('run')} 次运行，状态 {cex['state']}，{seq}，完整序列见 report.json")
         elif "state" in cex:
             parts.append(f"反例：第 {cex.get('run')} 次运行，状态 {cex['state']}")
+        elif cex.get("stderr") is not None:
+            said = " ".join(_plain(cex.get(k) or "") for k in ("stderr", "stdout")).strip()  # 细则 12.6
+            parts.append(f"程序异常退出（退出码 {cex.get('exit')}）：" + said)
         elif cex.get("stdout"):
             parts.append("反例：" + _plain(cex["stdout"]))
-        elif cex.get("stderr") is not None:
-            parts.append(f"程序异常退出（退出码 {cex.get('exit')}）：" + _plain(cex.get("stderr") or ""))
     return "；".join(parts)
 
 

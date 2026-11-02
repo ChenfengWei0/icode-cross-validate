@@ -23,6 +23,7 @@ LINE_MAX = 1 << 20
 GRACE = 10
 
 VACUOUS = "前件从未成立，实际没有被检验"
+PREFLIGHT_SECONDS = 300
 
 
 def run_command(command: str, cwd: Path, env: dict[str, str], timeout: float) -> dict:
@@ -117,6 +118,52 @@ def _counterexample(states: list[dict], at: int) -> dict:
     return out
 
 
+def preflight(
+    w: Path, align_dir: Path, props: dict[str, dict], checks: list[dict], entities: set[str], limits: dict
+) -> list[str]:
+    """细则 11.7: one run of each trace command before freezing; only the format of the trace is reported.
+
+    Verdicts, exit codes and timeouts are thrown away: they may be defects of the code, and an alignment
+    agent that knew about them could change the check until it passes.
+    """
+    deadline = time.monotonic() + PREFLIGHT_SECONDS
+    problems: list[str] = []
+    with tempfile.TemporaryDirectory(prefix="cv-preflight-") as tmp:
+        by_command: dict[str, list[dict]] = {}
+        for check in checks:
+            if check["kind"] == "trace":
+                by_command.setdefault(check["command"], []).append(check)
+        for n, (command, users) in enumerate(by_command.items()):
+            left = deadline - time.monotonic()
+            if left <= 0:
+                break
+            path = Path(tmp) / f"t{n}.jsonl"
+            env = {
+                "CV_ALIGN": str(align_dir),
+                "CV_W": str(w),
+                "PYTHONPYCACHEPREFIX": tmp,
+                "CV_RUN": "0",
+                "CV_TRACE": str(path),
+            }
+            out = run_command(command, w, env, min(users[0]["timeout"], max(1.0, left)))
+            if out["exit"] != 0:
+                continue
+            try:
+                states, _ = read_trace(path, limits["max_states"], limits.get("max_trace_bytes", 100 << 20), False)
+            except M.AlignError as e:
+                problems.append(f"{command}：{e}")
+                continue
+            for check in users:
+                prop = props[check["proposition"]]
+                try:
+                    if prop.get("pattern") == "从出发" and not M.scenario_matches(prop["tree"], states, entities):
+                        continue
+                    M.judge(prop["tree"], states, entities, deadline=deadline)
+                except M.AlignError as e:
+                    problems.append(f"{prop['id']}（{command}）：{e}")
+    return list(dict.fromkeys(problems))[:20]
+
+
 def run_checks(run: Path, w: Path, props: dict[str, dict], frozen: dict, entities: set[str], limits: dict) -> dict:
     """Run every frozen check (细则 11.3, 11.4) and return results.json (细则 13.6)."""
     run, w = Path(run), Path(w)
@@ -179,6 +226,7 @@ def run_checks(run: Path, w: Path, props: dict[str, dict], frozen: dict, entitie
                         "result": M.CHECK_FAILED,
                         "exit": out["exit"],
                         "stderr": out["stderr"],
+                        "stdout": out["stdout"],
                     }
                 continue
             try:

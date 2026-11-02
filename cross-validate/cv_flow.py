@@ -437,6 +437,16 @@ def align_prompt(state: dict) -> str:  # 算法1 第6行
     )
 
 
+def _preflight(state: dict, run: Path, props: dict, result: dict, config: dict) -> list[str]:
+    """细则 11.7: trouble in the trial run itself must not cost the run; the real checks still decide."""
+    try:
+        entities = Decls.from_json(S.read_json(run / "propositions.json")["decls"]).of("实体")
+        return RUN.preflight(Path(state["w"]), run / "align", props, result["checks"], entities, config)
+    except Exception as e:  # 细则 4.8: untrusted scripts must not crash the node
+        _note(state, f"冻结前试跑出错，已跳过：{type(e).__name__}（细则 11.7）")
+        return []
+
+
 def align_check(state: dict, answer: str | None, attempt: int, config: dict) -> tuple[dict, str | None]:
     run = Path(state["run"])
     props = {p["id"]: p for p in _accepted(run)}
@@ -447,6 +457,8 @@ def align_check(state: dict, answer: str | None, attempt: int, config: dict) -> 
         S.write_text(run / f"align-answer-{attempt}.txt", answer)
         data, error = A.load(run / "align")
         result = A.validate(data, props, config) if error is None else {"format_errors": [error]}
+        if not result["format_errors"] and attempt == 1:
+            result["format_errors"] = _preflight(state, run, props, result, config)
         if result["format_errors"] and attempt == 1:
             return state, prompt("align_fix", ERRORS=_bullets(result["format_errors"]), ALIGN=str(run / "align"))
         if result["format_errors"]:

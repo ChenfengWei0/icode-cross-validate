@@ -50,7 +50,7 @@
 | 细则 4.5 | 通过 | 1 个测试：test_algorithm_lines_annotated |
 | 细则 4.6 | 通过 | 1 个测试：test_placeholders_filled |
 | 细则 4.7 | 通过 | agent 节点用 config 的超时，run_checks 无超时，不设自动重试 |
-| 细则 4.8 | 通过 | 4 个测试：test_no_alignment_answer、test_bad_numbers_in_formulas、test_bad_numbers_in_sentences、test_unreadable_propositions_are_not_crashes |
+| 细则 4.8 | 通过 | 5 个测试：test_no_alignment_answer、test_bad_numbers_in_formulas、test_bad_numbers_in_sentences、test_unreadable_propositions_are_not_crashes 等 |
 | 细则 5.1 | 通过 | 2 个测试：test_verify_workflow、test_only_installed_workflow_runs |
 | 细则 5.2 | 通过 | 7 个测试：test_tampering_is_detected、test_frozen_checks_run、test_tamper_fails_closed、test_results_frozen 等 |
 | 细则 5.3 | 通过 | 4 个测试：test_guard_hook、test_subtask_tool_calls_invalidate、test_goal_mode_violation_log、test_violation_without_cwd_counts |
@@ -72,7 +72,7 @@
 | 细则 8.7 | 通过 | 2 个测试：test_quantifiers、test_types_and_arity |
 | 细则 8.8 | 通过 | 2 个测试：test_reserved_words、test_reserved_words_in_prompt |
 | 细则 8.9 | 通过 | 1 个测试：test_snake_propositions |
-| 细则 9.1 | 通过 | 19 个测试：test_snake_example_passes、test_fields_and_ids、test_parse_and_unpatterned、test_declared_and_bound 等 |
+| 细则 9.1 | 通过 | 20 个测试：test_snake_example_passes、test_fields_and_ids、test_parse_and_unpatterned、test_declared_and_bound 等 |
 | 细则 9.2 | 通过 | 3 个测试：test_checklist_ids_exist、test_rewrite_checks_new_declarations、test_declarations |
 | 细则 9.3 | 通过 | 4 个测试：test_revision_paths、test_rewrite_checks_new_declarations、test_rewrite_keeps_every_proposition、test_renumbered_duplicate_keeps_the_other |
 | 细则 9.4 | 人工 | “一条命题只说一件事”无法机械判断，只在提示中要求（README 细则 9.4、第 18 节） |
@@ -86,7 +86,7 @@
 | 细则 11.4 | 通过 | 1 个测试：test_trace_checks |
 | 细则 11.5 | 通过 | 1 个测试：test_coverage |
 | 细则 11.6 | 通过 | 2 个测试：test_coverage、test_no_alignment_answer |
-| 细则 11.7 | 通过 | 2 个测试：test_validate_format、test_revision_paths |
+| 细则 11.7 | 通过 | 5 个测试：test_validate_format、test_revision_paths、test_preflight_reports_the_format_and_nothing_else、test_preflight_goes_back_once 等 |
 | 细则 11.8 | 通过 | 4 个测试：test_budget、test_truncation、test_budget_cut_does_not_pass、test_judging_is_bounded |
 | 细则 11.9 | 通过 | 1 个测试：test_frozen_checks_run |
 | 细则 11.10 | 通过 | 1 个测试：test_alignment_prompt_asks_for_strict_checks_that_reach_the_hard_cases |
@@ -95,7 +95,7 @@
 | 细则 12.3 | 通过 | 5 个测试：test_values、test_no_contradiction_is_true、test_big_integers_exact、test_missing_key_after_violation 等 |
 | 细则 12.4 | 通过 | 3 个测试：test_entity_constant、test_listed_entities、test_only_individual_may_be_keyed_by_entity_name |
 | 细则 12.5 | 通过 | 1 个测试：test_scenario |
-| 细则 12.6 | 通过 | 5 个测试：test_nonzero_exit_fails、test_empty_trace、test_trace_must_be_a_regular_file、test_partial_line_after_timeout 等 |
+| 细则 12.6 | 通过 | 6 个测试：test_nonzero_exit_fails、test_empty_trace、test_trace_must_be_a_regular_file、test_partial_line_after_timeout 等 |
 | 细则 13.1 | 通过 | 2 个测试：test_four_values、test_progression_matches_reference |
 | 细则 13.2 | 通过 | 3 个测试：test_four_values、test_facts_at_state_zero、test_progression_matches_reference |
 | 细则 13.3 | 通过 | 4 个测试：test_trace_checks、test_order、test_missing_key_after_violation、test_coverage_failure_does_not_hide_a_failure |
@@ -153,7 +153,7 @@
 | P-1 | 通过 | 只导入标准库 |
 | P-2 | 通过 | ruff target-version = py310，workflow 声明 requires-python >=3.10 |
 | P-3 | 通过 | ruff check：All checks passed!；ruff format：48 files already formatted |
-| P-4 | 通过 | 插件本体 246 KB；含 iCode 版权声明的文件：无 |
-| P-5 | 通过 | pytest：196 passed in 115.54s (0:01:55) |
-| P-6 | 通过 | 重建以来 8 个提交 |
+| P-4 | 通过 | 插件本体 250 KB；含 iCode 版权声明的文件：无 |
+| P-5 | 通过 | pytest：201 passed in 118.66s (0:01:58) |
+| P-6 | 通过 | 重建以来 9 个提交 |
 | P-7 | 通过 | 含令牌或密钥的文件：无 |

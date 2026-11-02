@@ -705,3 +705,117 @@ def test_only_individual_may_be_keyed_by_entity_name(decls):
     assert M.judge(quantified, by_name, ENT)["result"] == M.PRESUMED_TRUE
     with pytest.raises(M.AlignError):
         M.judge(quantified, [{"实体": {"蛇": ["a", "b"]}, "值": {"长度(蛇)": 3}}], ENT)
+
+
+def _trace_script(tmp_path, name, states, exit_code=0):
+    path = tmp_path / name
+    body = "\n".join(json.dumps(s, ensure_ascii=False) for s in states)
+    path.write_text(
+        f"import os, sys\nopen(os.environ['CV_TRACE'], 'w', encoding='utf-8').write({body!r})\nsys.exit({exit_code})\n"
+    )
+    return f"{sys.executable} {path}"
+
+
+def test_preflight_reports_the_format_and_nothing_else(decls, tmp_path):
+    """细则 11.7 a key mistake goes back before freezing; a verdict, a crash or a timeout never does."""
+    tree, pattern = G.parse_sentence("总是 蛇的长度 大于 1", decls)
+    p = {"R1": {"id": "R1", "tree": tree, "pattern": pattern, "class": F.classify(tree)}}
+
+    def problems(command, timeout=30):
+        check = {"proposition": "R1", "kind": "trace", "command": command, "timeout": timeout, "runs": 1}
+        return RUN.preflight(tmp_path, tmp_path, p, [check], ENT, LIMITS)
+
+    assert any("缺少 长度(蛇)" in x for x in problems(_trace_script(tmp_path, "a.py", [{"值": {"宽度(蛇)": 3}}])))
+    assert problems(_trace_script(tmp_path, "b.py", [{"值": {"长度(蛇)": 3}}])) == []
+    # The code breaks the proposition: that is a verdict and must not reach the agent.
+    assert problems(_trace_script(tmp_path, "c.py", [{"值": {"长度(蛇)": 0}}])) == []
+    # A script that exits non-zero may have found a defect: not said either, even with a bad trace.
+    assert problems(_trace_script(tmp_path, "d.py", [{"值": {"宽度(蛇)": 3}}], 2)) == []
+    assert problems(f"{sys.executable} -c 'import time; time.sleep(9)'", timeout=1) == []
+    assert any("轨迹" in x for x in problems(f"{sys.executable} -c 'pass'"))
+    assert list(tmp_path.glob("*.jsonl")) == []
+
+
+def test_preflight_goes_back_once(home, tmp_path, light_align, monkeypatch):
+    """细则 11.7 trace problems take the format-correction path once; trouble in the trial is skipped."""
+    state, _ = goal_run(home, tmp_path)
+    FLOW.align_prompt(state)
+    for f in light_align.iterdir():
+        shutil.copy2(f, Path(state["run"]) / "align" / f.name)
+    calls = []
+    monkeypatch.setattr(RUN, "preflight", lambda *a: calls.append(a) or ["R5（x）：状态 0 缺少 长度(蛇)"])
+    state, again = FLOW.align_check(state, "已完成", 1, FLOW.load_config())
+    assert "缺少 长度(蛇)" in again and "脚本写出的轨迹" in again
+    state, again = FLOW.align_check(state, "已修正", 2, FLOW.load_config())
+    assert (
+        again is None
+        and len(calls) == 1
+        and "align_failures" in S.read_json(Path(state["run"]) / "align" / "checks.frozen.json")
+    )
+    assert S.read_json(Path(state["run"]) / "align" / "checks.frozen.json")["checks"]
+
+
+def test_preflight_error_is_skipped(home, tmp_path, light_align, monkeypatch):
+    """细则 4.8 11.7 an error in the trial run neither stops the run nor sends the agent back."""
+    state, _ = goal_run(home, tmp_path)
+    FLOW.align_prompt(state)
+    for f in light_align.iterdir():
+        shutil.copy2(f, Path(state["run"]) / "align" / f.name)
+
+    def broken(*_):
+        raise OSError("x")
+
+    monkeypatch.setattr(RUN, "preflight", broken)
+    state, again = FLOW.align_check(state, "已完成", 1, FLOW.load_config())
+    assert again is None and any("试跑出错" in n for n in state["notes"])
+
+
+def test_exception_name_survives_translation():
+    """细则 9.1 第 5 项 抛出 IndexError abstracted to 报错 let code raising another exception pass."""
+    original = "空栈时抛出 IndexError。类 Stack 提供 push。"
+    sentences = [
+        {"id": "S1", "text": "空栈时抛出 IndexError。", "labels": ["规则"], "quotable": ["空栈时抛出 IndexError。"]}
+    ]
+    block = "编号  {}\n来源  翻译\n依据  「空栈时抛出 IndexError」\n句子  {}"
+    extra = (
+        "谓词  报错(栈)  这一步调用失败\n      抛错(栈)  这一步抛出 IndexError\n      抛出IndexError(栈)  这一步抛错\n"
+    )
+    out = stack_checked_with(
+        extra,
+        [
+            block.format("R1", "只要 深度(栈) 等于 0，就 栈 报错"),
+            block.format("R2", "只要 深度(栈) 等于 0，就 栈 抛错"),
+            block.format("R3", "只要 深度(栈) 等于 0，就 栈 抛出IndexError"),
+        ],
+        sentences,
+        original,
+    )
+    assert any("异常名 IndexError" in x for x in out["R1"]["problems"])
+    assert out["R2"]["problems"] == [] and out["R3"]["problems"] == []
+    assert C.lost_exceptions("抛出 ValueError 或 KeyError", "ValueError", "", None, F.Decls()) == ["KeyError"]
+    assert C.lost_exceptions("Errors are bad", "", "", None, F.Decls()) == []
+
+
+def stack_checked_with(extra, blocks, sentences, original):
+    items = [f"{name}  无：无" for name in T.CHECKLIST]
+    head = f"声明\n{extra}{STACK}清单\n" + "\n".join(items) + "\n\n命题\n" + "\n\n".join(blocks)
+    parsed = T.parse_subtask(head, original)
+    assert parsed["errors"] == []
+    return {p["id"]: p for p in C.check_propositions(parsed, sentences, original)}
+
+
+def test_crash_report_shows_what_the_script_printed(decls, tmp_path):
+    """细则 12.6 a trace script that aborts says why, on stdout or stderr."""
+    tree, pattern = G.parse_sentence("总是 蛇的长度 大于 1", decls)
+    p = {"R1": {"id": "R1", "tree": tree, "pattern": pattern, "class": F.classify(tree)}}
+    (tmp_path / "w").mkdir()
+    run = tmp_path / "run"
+    (run / "align").mkdir(parents=True)
+    command = f"{sys.executable} -c \"print('push did not add an item'); raise SystemExit(2)\""
+    check = {"proposition": "R1", "form": "t", "kind": "trace", "command": command, "runs": 1, "timeout": 30}
+    out = RUN.run_checks(run, tmp_path / "w", p, frozen_for([check]), ENT, LIMITS)["propositions"]["R1"]
+    assert out["result"] == M.CHECK_FAILED
+    import cv_report as RP
+
+    detail = RP._detail(out)
+    assert "退出码 2" in detail and "push did not add an item" in detail
