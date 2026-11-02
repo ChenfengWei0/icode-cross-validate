@@ -152,7 +152,12 @@ def test_budget(decls, tmp_path):
         set(),
         {**LIMITS, "budget": 0},
     )
-    assert out["propositions"]["R9"] == {"result": M.ALIGN_FAILED, "reason": "预算用尽，未运行", "counterexample": None}
+    assert out["propositions"]["R9"] == {
+        "result": M.ALIGN_FAILED,
+        "reason": "预算用尽，未运行",
+        "counterexample": None,
+        "notes": [],
+    }
 
 
 def test_truncation(tmp_path):

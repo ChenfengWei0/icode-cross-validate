@@ -136,6 +136,45 @@ def test_guard_hook(home, tmp_path, monkeypatch):
     assert json.loads((run / "tool-violations.jsonl").read_text())["tool"] == "read_file"
 
 
+def test_history_guard(home, tmp_path, monkeypatch):
+    """细则 5.6 agents do not read other runs; the cv command, W and the running align/ stay usable."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    state = S.ensure_private(S.cv_home())
+    done = state / "projects" / "p" / "runs" / "old"
+    (done / "align").mkdir(parents=True)
+    (done / "report.md").write_text("报告")
+    live = state / "projects" / "p" / "runs" / "new"
+    (live / "align").mkdir(parents=True)
+    w = state / "projects" / "p" / "snapshots" / "s"
+    w.mkdir(parents=True)
+
+    def verdict(profile, args, cwd=tmp_path):
+        payload = {
+            "event": "before_tool_call",
+            "profile": profile,
+            "cwd": str(cwd),
+            "tool": {"name": "t", "args": args},
+        }
+        out = hook("history", payload, tmp_path, monkeypatch)
+        return json.loads(out)["action"] if out else "allow"
+
+    assert verdict("Code", {"path": str(done / "report.md")}) == "block"
+    assert verdict("Code", {"command": f"cat '{done}/report.md'"}) == "block"
+    assert verdict("Code", {"command": "ls", "working_dir": str(done)}) == "block"
+    assert verdict("Code", {"command": f"{state}/bin/cv status"}) == "allow"
+    assert verdict("Code", {"command": f"{state}/bin/../projects"}) == "block"
+    assert verdict("Code", {"path": "src/cross-validate/cv_flow.py"}) == "allow"
+    assert verdict("cv-align", {"path": str(live / "align" / "checks.json")}) == "allow"
+    assert verdict("cv-align", {"path": str(done / "align" / "checks.json")}) == "block"
+    assert verdict("cv-align", {"path": str(live / "propositions.json")}) == "block"
+    assert verdict("cv-align", {"command": f"cat {w}/a.py; cat {done}/report.md"}, w) == "block"
+    assert verdict("cv-align", {"command": f"cat {w}/a.py"}, w) == "allow"
+    assert verdict("cv-align", {"path": str(done / "report.md")}, tmp_path) == "block"  # W above the state dir
+    assert verdict("cv-subtask", {"path": str(done / "report.md")}) == "allow"  # its own guard refuses everything
+    lines = (state / "history-reads.jsonl").read_text().splitlines()
+    assert len(lines) == 8 and json.loads(lines[0])["profile"] == "Code"
+
+
 def test_turn_and_session_triggers(home, tmp_path, monkeypatch, fake_icode):
     """细则 16.1 16.2 14.3 15.5 after_turn needs N new messages; session_end any; the launcher runs icode in a snapshot."""
     installed(home, fake_icode)
@@ -183,11 +222,49 @@ def test_lock_and_pending(home, tmp_path, monkeypatch, fake_icode):
         fcntl.flock(held, fcntl.LOCK_EX)
         assert CLI.launch(p, "手动") is None
         assert (pdir / "pending").exists()
+    # A trigger that arrives during the run (a new message and its pending mark) gets its own run.
     monkeypatch.setenv("FAKE_APPEND", str(L.ledger_file(p)))
+    real = CLI.run_once
+
+    def once(project, trigger, config):
+        out = real(project, trigger, config)
+        monkeypatch.delenv("FAKE_APPEND", raising=False)
+        if trigger == "手动":
+            (pdir / "pending").touch()
+        return out
+
+    monkeypatch.setattr(CLI, "run_once", once)
     CLI.launch(p, "手动")
     runs = [c for c in calls(fake_icode) if c["args"][:2] == ["workflow", "run"]]
-    assert len(runs) == 2 and not (pdir / "pending").exists()
+    assert len(runs) == 2 and not (pdir / "pending").exists() and not (pdir / "running").exists()
     assert S.read_json(Path(runs[1]["run_dir"]) / "run.json")["last_message"] == "M99"
+
+
+def test_pending_after_release(home, tmp_path, fake_icode):
+    """细则 16.3 a trigger that marks pending just before the holder releases the lock is not lost."""
+    installed(home, fake_icode)
+    p = git_project(tmp_path)
+    CLI.main(["init", str(p)])
+    L.append_message(p, "s", "实现贪吃蛇。", False)
+    pdir = S.project_dir(p)
+    real_unlink = Path.unlink
+    state = {"done": False}
+
+    def unlink(self, missing_ok=False):
+        real_unlink(self, missing_ok=missing_ok)
+        if self.name == "running" and not state["done"]:
+            state["done"] = True
+            L.append_message(p, "s", "长度从 3 开始。", False)
+            (pdir / "pending").touch()  # the late trigger: its lock attempt failed a moment ago
+
+    Path.unlink = unlink
+    try:
+        CLI.launch(p, "手动")
+    finally:
+        Path.unlink = real_unlink
+    runs = [c for c in calls(fake_icode) if c["args"][:2] == ["workflow", "run"]]
+    assert len(runs) == 2
+    assert S.read_json(Path(runs[1]["run_dir"]) / "run.json")["last_message"] == "M2"
 
 
 def test_snapshot(home, tmp_path):
@@ -209,7 +286,7 @@ def test_snapshot(home, tmp_path):
     names = sorted(x.relative_to(target).as_posix() for x in target.rglob("*"))
     assert "snake.py" in names and "untracked.py" in names and ".env" in names and "inside_link.py" in names
     assert not any(n.startswith((".git/", ".chrys", "build")) for n in names) and "outside_link" not in names
-    assert (target / "node_modules").is_symlink()
+    assert (target / "node_modules").is_dir() and not (target / "node_modules").is_symlink()
     assert (
         any("node_modules" in n for n in notes)
         and any("outside_link" in n for n in notes)
@@ -246,16 +323,145 @@ def test_install_uninstall(tmp_path, monkeypatch):
     assert CLI.main(["install"]) == 0
     text = (h / "hooks" / "hooks.yaml").read_text()
     assert (
-        "id: mine" in text and text.count("- id: cv-") == 4 and str(h / "cross-validate" / "bin" / "cv_hook.py") in text
+        "id: mine" in text
+        and text.count("- id: cv-") == len(CLI.HOOK_IDS)
+        and str(h / "cross-validate" / "bin" / "cv_hook.py") in text
     )
     assert sorted(p.name for p in (h / "agents").iterdir()) == ["cv-align.yaml", "cv-subtask.yaml", "other.yaml"]
     assert (h / "workflows" / "cross-validate" / "cross-validate.py").exists()
     assert S.read_json(h / "cross-validate" / "install.json")["workflow_digest"] == S.folder_digest(
         h / "workflows" / "cross-validate"
     )
-    assert CLI.main(["install"]) == 0 and (h / "hooks" / "hooks.yaml").read_text().count("- id: cv-") == 4
+    assert CLI.main(["install"]) == 0 and (h / "hooks" / "hooks.yaml").read_text().count("- id: cv-") == len(
+        CLI.HOOK_IDS
+    )
     assert CLI.main(["uninstall"]) == 0
     text = (h / "hooks" / "hooks.yaml").read_text()
     assert "id: mine" in text and "cv-" not in text
     assert sorted(p.name for p in (h / "agents").iterdir()) == ["other.yaml"]
     assert not (h / "workflows" / "cross-validate").exists()
+
+
+USER_HOOK = """  - id: my-hook
+    event: after_turn
+    run:
+      type: command
+      argv: ["true"]
+    execution:
+      mode: fire_and_forget
+"""
+
+
+@pytest.mark.parametrize(
+    "original",
+    [
+        "version: 1\nhooks:\n" + USER_HOOK,
+        "version: 1\nhooks:\n" + "\n".join(x[2:] for x in USER_HOOK.splitlines()) + "\n",
+        "hooks:\n" + USER_HOOK + "\n# note\nversion: 1\n",
+        "version: 1\nhooks: []\n",
+        "",
+    ],
+)
+def test_hooks_yaml_round_trip(original):
+    """细则 16.7 merging works on common layouts and uninstall restores a valid file."""
+    merged = CLI.merged_yaml(original, "/usr/bin/python3", 'C:\\odd "dir"\\cv_hook.py')
+    assert merged.count("- id: cv-") == len(CLI.HOOK_IDS) and json.dumps('C:\\odd "dir"\\cv_hook.py') in merged
+    if "my-hook" in original:
+        assert merged.index("my-hook") < merged.index("cv-record")
+    back = CLI.unmerged_yaml(merged)
+    assert "cv-" not in back
+    assert back.strip() == (original.strip() or "version: 1\nhooks: []")
+    with pytest.raises(CLI.MergeError):
+        CLI.merged_yaml("hooks: [{id: x}]\n", "p", "h")
+
+
+def test_install_keeps_user_hooks(home, tmp_path, monkeypatch, fake_icode):
+    """细则 16.7 user hooks named cv-… survive; the first backup is kept; uninstall cleans up."""
+    hooks = home / "hooks"
+    hooks.mkdir(parents=True)
+    user = {"version": 1, "hooks": [{"id": "cv-model-lint", "event": "after_turn"}]}
+    (hooks / "hooks.json").write_text(json.dumps(user))
+    monkeypatch.chdir(ROOT)
+    CLI.main(["install"])
+    CLI.main(["install"])
+    ids = [h["id"] for h in json.loads((hooks / "hooks.json").read_text())["hooks"]]
+    assert ids == ["cv-model-lint", *CLI.HOOK_IDS]
+    assert json.loads((hooks / "hooks.json.cv-backup").read_text()) == user
+    CLI.main(["uninstall"])
+    assert json.loads((hooks / "hooks.json").read_text())["hooks"] == user["hooks"]
+    assert not (hooks / "hooks.json.cv-backup").exists() and not (S.cv_home() / "install.json").exists()
+
+
+def test_install_refuses_before_changing(home, tmp_path, fake_icode):
+    """细则 16.7 an unsafe hooks layout stops install before any file changes."""
+    hooks = home / "hooks"
+    hooks.mkdir(parents=True)
+    (hooks / "hooks.yaml").write_text("hooks: [{id: x}]\n")
+    S.global_workflow_dir().joinpath("marker").write_text("old")
+    with pytest.raises(SystemExit, match="没有改动任何文件"):
+        CLI.main(["install"])
+    assert S.global_workflow_dir().joinpath("marker").exists()
+
+
+def test_unreadable_file_stops_with_report(home, tmp_path, fake_icode):
+    """细则 16.2 16.4 a file the user cannot read stops the run with a report; its messages count as seen."""
+    installed(home, fake_icode)
+    p = git_project(tmp_path)
+    CLI.main(["init", str(p)])
+    secret = p / "secret.py"
+    secret.write_text("x")
+    secret.chmod(0)
+    L.append_message(p, "s", "实现贪吃蛇。", False)
+    try:
+        run = CLI.launch(p, "手动")
+    finally:
+        secret.chmod(0o600)
+    assert "**无结论**" in (run / "report.md").read_text(encoding="utf-8")
+    assert CLI.new_messages(p) == []
+
+
+def test_ignored_project_is_not_git(home, tmp_path):
+    """细则 15.1 a directory ignored by an enclosing repository is not a git project."""
+    outer = tmp_path / "dots"
+    outer.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=outer, check=True)
+    (outer / ".gitignore").write_text("*\n")
+    inner = outer / "work" / "proj"
+    inner.mkdir(parents=True)
+    assert not CLI._is_git(inner)
+
+
+def test_directory_links_in_snapshot(home, tmp_path):
+    """细则 16.4 a link to a directory inside the project is kept; one pointing outside is reported."""
+    p = tmp_path / "plain"
+    (p / "real").mkdir(parents=True)
+    (p / "real" / "a.py").write_text("a")
+    (tmp_path / "outside").mkdir()
+    os.symlink("real", p / "alias")
+    os.symlink("../outside", p / "ext")
+    target = tmp_path / "snap"
+    notes = CLI.snapshot(p, target, CLI._config())
+    assert (target / "alias").is_symlink() and not (target / "ext").exists()
+    assert any("ext" in n for n in notes)
+
+
+def test_hooks_find_enabled_parent(home, tmp_path, monkeypatch):
+    """细则 15.1 a session started in a subdirectory records into the enabled project."""
+    p = git_project(tmp_path)
+    CLI.main(["init", str(p)])
+    (p / "src").mkdir()
+    payload = {"event": "user_prompt_submit", "session_id": "s", "cwd": str(p / "src"), "text": "实现贪吃蛇。"}
+    hook("record", payload, tmp_path, monkeypatch)
+    assert [m["text"] for m in L.read_messages(L.ledger_file(p))] == ["实现贪吃蛇。"]
+
+
+def test_check_prints_no_report(home, tmp_path, fake_icode, capsys):
+    """细则 16.6 cv check and cv status show the conclusion and the path, never the report."""
+    installed(home, fake_icode)
+    p = git_project(tmp_path)
+    CLI.main(["init", str(p)])
+    L.append_message(p, "s", "实现贪吃蛇。", False)
+    capsys.readouterr()
+    CLI.main(["check", str(p)])
+    out = capsys.readouterr().out
+    assert "比对结论：比对通过" in out and "假的" not in out

@@ -36,19 +36,6 @@ def fast_config():
     return config
 
 
-@pytest.fixture
-def light_align(tmp_path):
-    """The snake checks with 3 runs instead of 50."""
-    d = tmp_path / "align"
-    shutil.copytree(SNAKE / "align", d)
-    data = json.loads((d / "checks.json").read_text(encoding="utf-8"))
-    for c in data["checks"]:
-        if c["kind"] == "trace":
-            c["runs"] = 3
-    (d / "checks.json").write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-    return d
-
-
 def test_state_outside_project(home, tmp_path):
     """细则 3.1 3.2 runs live under ~/.chrys/cross-validate/projects/<key>/runs/<run>, mode 700."""
     state, w = goal_run(home, tmp_path)
@@ -188,14 +175,60 @@ def test_align_input(home, tmp_path):
 
 
 def test_frozen_checks_run(home, tmp_path, light_align):
-    """细则 11.9 the checker runs the frozen checks, not the agent's file as it is later."""
+    """细则 11.9 5.2 the checker runs the frozen checks; changing align/ afterwards makes the run invalid."""
     config = fast_config()
     state, _ = goal_run(home, tmp_path)
     state = aligned(state, config, light_align)
+    frozen = S.read_json(Path(state["run"]) / "align" / "checks.frozen.json")
+    assert any(c["proposition"] == "R5" for c in frozen["checks"])
     agent_file = Path(state["run"]) / "align" / "checks.json"
     data = json.loads(agent_file.read_text(encoding="utf-8"))
     data["checks"] = [c for c in data["checks"] if c["proposition"] != "R5"]
     agent_file.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     state = FLOW.run_checks(state, config)
-    results = S.read_json(Path(state["run"]) / "results.json")
-    assert any(c["proposition"] == "R5" for c in results["checks"])
+    assert not (Path(state["run"]) / "results.json").exists()
+    assert "align/checks.json" in FLOW.report(state, config)
+
+
+@pytest.mark.parametrize("victim", ["w-before.json", "digests.json", "propositions.json"])
+def test_tamper_fails_closed(home, tmp_path, light_align, victim):
+    """细则 5.2 5.4 digests live in the workflow state: deleting or rewriting the run's files is caught."""
+    config = fast_config()
+    state, w = goal_run(home, tmp_path, "buggy")
+    state = aligned(state, config, light_align)
+    run = Path(state["run"])
+    if victim == "propositions.json":  # drop the failing propositions and hide it
+        data = S.read_json(run / victim)
+        data["propositions"] = [p for p in data["propositions"] if p["id"] in ("R1", "R3", "R9")]
+        S.write_json(run / victim, data)
+        (run / "digests.json").unlink()
+    else:
+        shutil.copy2(SNAKE / "correct" / "snake.py", w / "snake.py")
+        (run / victim).unlink()
+    state = FLOW.run_checks(state, config)
+    text = FLOW.report(state, config)
+    assert "**无效**" in text
+
+
+def test_results_frozen(home, tmp_path, light_align):
+    """细则 5.2 results.json is frozen after the checker; a later rewrite makes the report invalid."""
+    config = fast_config()
+    state, _ = goal_run(home, tmp_path, "buggy")
+    state = aligned(state, config, light_align)
+    state = FLOW.run_checks(state, config)
+    run = Path(state["run"])
+    results = S.read_json(run / "results.json")
+    for r in results["propositions"].values():
+        r["result"] = "通过"
+    S.write_json(run / "results.json", results)
+    assert "**无效**" in FLOW.report(state, config)
+
+
+def test_no_alignment_answer(home, tmp_path):
+    """细则 4.8 11.6 an alignment agent that gives no answer fails every proposition, it is not 无结论."""
+    config = fast_config()
+    state, _ = goal_run(home, tmp_path)
+    FLOW.align_prompt(state)
+    state = FLOW.run_checks(state, config)
+    text = FLOW.report(state, config)
+    assert "**比对未通过**" in text and "对齐 agent 没有回答" in text

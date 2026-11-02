@@ -1,3 +1,4 @@
+import json
 import shutil
 import sys
 from pathlib import Path
@@ -50,4 +51,23 @@ def home(tmp_path, monkeypatch):
     shutil.copytree(
         ROOT / "cross-validate", h / "workflows" / "cross-validate", ignore=shutil.ignore_patterns("__pycache__")
     )
+    import cv_state as S
+
+    S.write_json(
+        S.ensure_private(S.cv_home()) / "install.json",
+        {"workflow_digest": S.folder_digest(h / "workflows" / "cross-validate")},
+    )
     return h
+
+
+@pytest.fixture
+def light_align(tmp_path):
+    """The snake checks with 3 runs instead of 50."""
+    d = tmp_path / "align"
+    shutil.copytree(ROOT / "examples" / "snake" / "align", d)
+    data = json.loads((d / "checks.json").read_text(encoding="utf-8"))
+    for c in data["checks"]:
+        if c["kind"] == "trace":
+            c["runs"] = 3
+    (d / "checks.json").write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    return d

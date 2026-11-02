@@ -8,8 +8,9 @@ SUBTASK = (ROOT / "examples" / "snake" / "subtask.txt").read_text(encoding="utf-
 GOAL = [{"id": "S1", "text": "实现贪吃蛇。", "labels": ["无"], "quotable": ["实现贪吃蛇。"]}]
 
 
-def check(extra: str, sentences=GOAL, original="实现贪吃蛇。"):
-    parsed = T.parse_subtask(SUBTASK + "\n\n" + extra, original)
+def check(extra: str, sentences=GOAL, original="实现贪吃蛇。", decls=""):
+    base = SUBTASK.replace("数量  长度(蛇)", decls + "数量  长度(蛇)") if decls else SUBTASK
+    parsed = T.parse_subtask(base + "\n\n" + extra, original)
     return {p["id"]: p for p in C.check_propositions(parsed, sentences, original)}
 
 
@@ -85,20 +86,55 @@ def test_translation():
         original,
     )
     assert out["R11"]["problems"] == [] and out["R15"]["problems"] == []
-    assert any("要求句式为" in x and "命题用的是 从不" in x for x in out["R12"]["problems"])
+    assert any("句式 从不 在引文中没有对应" in x for x in out["R12"]["problems"])
     assert any("数 2" in x for x in out["R13"]["problems"])
+    # 细则 17.9: a rule sentence is its own basis, whatever part of it is quoted.
     assert out["R14"]["problems"] == []
     assert any("「」引用原话" in x for x in out["R16"]["problems"])
     unlabeled = check("编号  R11\n来源  翻译\n依据  「实现贪吃蛇」\n句子  存在一个 x，使 x 是 蛇")
     assert any("带标签句子" in x for x in unlabeled["R11"]["problems"])
 
 
-def test_allowed_patterns():
-    """细则 9.1 第 5 项 示例 and 接口规定 labels open the example and structure patterns."""
-    assert C.allowed_patterns("如果超时就重试", ["条件"]) == {"只要就"}
-    assert "调用得到" in C.allowed_patterns("例如 add(1, 2) 得到 3", ["示例"])
-    assert "结构：签名" in C.allowed_patterns("函数 add 接受两个整数", ["接口规定"])
-    assert C.allowed_patterns("初始时为空", ["规则"]) == set()
+def test_pattern_basis():
+    """细则 9.1 第 5 项 keywords and labels allow patterns; they never forbid one."""
+    assert C.pattern_basis("只要就", "如果超时就重试", ["条件"])
+    assert C.pattern_basis("只要下一步", "蛇吃到食物时长度加一", ["规则"])
+    assert not C.pattern_basis("只要就", "初始时为空", ["示例"])
+    # 细则 17.9: 规则、条件、数量约束 allow these without a keyword; 从不 still needs a negation.
+    assert C.pattern_basis("只要就", "空栈调用 pop 抛出 IndexError", ["规则"])
+    assert C.pattern_basis("总是", "pop 返回最后压入的元素", ["条件"])
+    assert not C.pattern_basis("从不", "不需要界面", ["规则"])
+    assert C.pattern_basis("调用得到", "例如 add(1, 2) 得到 3", ["示例"])
+    assert not C.pattern_basis("调用得到", "例如 add(1, 2) 得到 3", ["规则"])
+    assert C.pattern_basis("结构：签名", "函数 add 接受两个整数", ["接口规定"])
+    # "时间" contains 时, but that only allows 只要就; it does not forbid 总是.
+    assert C.pattern_basis("总是", "游戏时间总是不超过 60 秒", ["规则"])
+    assert C.pattern_basis("具体事实", "格子总数为 100", ["规则"])
+
+
+def test_quotes_and_numbers():
+    """细则 9.1 第 5 项 nested 「」 quotes; numbers read by value, inside JSON literals too."""
+    assert C.quotes_in("依据「按「开始」键后游戏运行」与「x」") == ["按「开始」键后游戏运行", "x"]
+    assert C.quote_numbers("长度为 10，宽１２，十二格，两百分，一个蛇") == [10.0, 12.0, 12.0, 200.0, 1.0]
+    sentences = [
+        {
+            "id": "S1",
+            "text": "例如 move(1, 2) 得到 [3]。",
+            "labels": ["示例"],
+            "quotable": ["例如 move(1, 2) 得到 [3]。"],
+        }
+    ]
+    out = check(
+        "编号  R11\n来源  翻译\n依据  「例如 move(1, 2) 得到 [3]」\n句子  调用 `move`(1, 2) 得到 [3]\n\n"
+        "编号  R12\n来源  翻译\n依据  「例如 move(1, 2) 得到 [3]」\n句子  调用 `move`(1, 2) 得到 [99]\n\n"
+        "编号  R13\n来源  翻译\n依据  「例如 move(1, 2) 得到 [3]」\n句子  调用 `move`(1, 20) 得到 [3]",
+        sentences,
+        "例如 move(1, 2) 得到 [3]。",
+        decls="接口  move  需求中的函数\n",
+    )
+    assert out["R11"]["problems"] == []
+    assert any("数 99" in x for x in out["R12"]["problems"])
+    assert any("数 20" in x for x in out["R13"]["problems"])
 
 
 def test_reasoning_item():
