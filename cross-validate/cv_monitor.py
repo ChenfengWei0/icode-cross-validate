@@ -99,11 +99,26 @@ class Trace:
             return True
         return isinstance(ind, str) and ind in self.entities and ind not in self.listed
 
-    def value(self, k: int, key: str):
+    def value(self, k: int, name: str, ids: list):
+        """细则 12.4: the only individual of an entity may be written by the entity's name in a key."""
+        key = _key(name, ids)
         values = self.state(k).get("值")
-        if not isinstance(values, dict) or key not in values:
+        if not isinstance(values, dict):
             raise AlignError(f"状态 {k} 缺少 {key}（细则 12.3）")
-        return values[key]
+        if key in values:
+            return values[key]
+        alias = _key(name, [self._entity_of_only(k, i) for i in ids])
+        if alias not in values:
+            raise AlignError(f"状态 {k} 缺少 {key}（细则 12.3）")
+        return values[alias]
+
+    def _entity_of_only(self, k: int, ind):
+        listed = self.state(k).get("实体")
+        if isinstance(listed, dict):
+            for entity, xs in listed.items():
+                if isinstance(xs, list) and len(xs) == 1 and xs[0] == ind and type(xs[0]) is type(ind):
+                    return entity
+        return ind
 
 
 def _scalar(x) -> bool:
@@ -142,7 +157,7 @@ def term_value(n: dict, tr: Trace, k: int):
         for i in ids:
             if not tr.present(k, i):
                 raise _Absent
-        return tr.value(k, _key(n["name"], ids))
+        return tr.value(k, n["name"], ids)
     if op in F.ARITHMETIC:
         a, b = (term_value(x, tr, k) for x in n["args"])
         if not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in (a, b)):
@@ -187,7 +202,7 @@ def atom_value(n: dict, tr: Trace, k: int) -> bool:
             for i in ids:
                 if not tr.present(k, i):
                     return False
-            v = tr.value(k, _key(n["name"], ids))
+            v = tr.value(k, n["name"], ids)
             if not isinstance(v, bool):
                 raise AlignError(f"谓词 {_key(n['name'], ids)} 的值应是布尔值，实际为 {v!r}")
             return v
@@ -470,7 +485,7 @@ def _require_keys(atoms: list[dict], tr: Trace, k: int) -> None:
     for a in atoms:
         ids = [_ind(x, tr, k) for x in a["args"]]
         if all(tr.present(k, i) for i in ids):
-            tr.value(k, _key(a["name"], ids))
+            tr.value(k, a["name"], ids)
 
 
 def _trigger(tree: dict) -> tuple[dict, list[dict]] | None:

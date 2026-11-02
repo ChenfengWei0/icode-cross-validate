@@ -684,3 +684,24 @@ def test_alignment_prompt_asks_for_strict_checks_that_reach_the_hard_cases():
     text = (Path(FLOW.__file__).parent / "prompts" / "align.md").read_text(encoding="utf-8")
     for phrase in ("严格按声明的接口名检查", "不要换别的名字代替", "明显超过示例", "允许重复的值", "前件都要真的发生"):
         assert phrase in text
+
+
+def test_only_individual_may_be_keyed_by_entity_name(decls):
+    """细则 12.4 a live run listed 栈 as ["S"] and wrote 栈顶(栈): correct code failed on every temporal check."""
+    tree, _ = G.parse_sentence("总是 蛇的长度 不小于 1", decls)
+    listed = {"蛇": ["S"], "食物": [], "游戏": []}
+    by_name = [{"实体": listed, "值": {"长度(蛇)": 3}}]
+    by_id = [{"实体": listed, "值": {"长度(S)": 3}}]
+    assert M.judge(tree, by_name, ENT)["result"] == M.PRESUMED_TRUE
+    assert M.judge(tree, by_id, ENT)["result"] == M.PRESUMED_TRUE
+    # The individual's own key wins, and a wrong value under the name is still found.
+    both = [{"实体": listed, "值": {"长度(S)": 3, "长度(蛇)": 0}}]
+    assert M.judge(tree, both, ENT)["result"] == M.PRESUMED_TRUE
+    assert M.judge(tree, [{"实体": listed, "值": {"长度(蛇)": 0}}], ENT)["result"] == M.VIOLATED
+    # Still a missing key when neither form is there, or when the entity has several individuals.
+    with pytest.raises(M.AlignError, match="缺少"):
+        M.judge(tree, [{"实体": listed, "值": {}}], ENT)
+    quantified = F.parse("∀x:蛇 G(长度(x) ≥ 1)", decls)
+    assert M.judge(quantified, by_name, ENT)["result"] == M.PRESUMED_TRUE
+    with pytest.raises(M.AlignError):
+        M.judge(quantified, [{"实体": {"蛇": ["a", "b"]}, "值": {"长度(蛇)": 3}}], ENT)
