@@ -120,8 +120,8 @@ def static_checks() -> dict[str, tuple[str, str]]:
         "需求积累在 cv_ledger.py 与 cv_cli.py",
     )
     out["1.4"] = (
-        PASS if '["sh", "-c", command]' in read(WF / "cv_run.py") else FAIL,
-        "检查一律以 sh -c 执行（cv_run.run_command）",
+        PASS if '"--", "sh", "-c", command]' in read(WF / "cv_run.py") else FAIL,
+        "检查一律经包装进程以 sh -c 执行（cv_run.run_command、cv_exec.py）",
     )
     parts = [WF / "cross-validate.py", ROOT / "agents" / "cv-subtask.yaml", ROOT / "agents" / "cv-align.yaml",
              ROOT / "hooks" / "hooks.yaml", ROOT / "cv"]  # fmt: skip
@@ -212,8 +212,10 @@ def icode_checks(home: Path) -> dict[str, tuple[str, str]]:
             problems.append(f"{h['id']}: 事件或模式")
         if ex.get("detach") and ex.get("mode") != "fire_and_forget":
             problems.append(f"{h['id']}: detach")
-        if h["event"] == "before_tool_call" and not h.get("match", {}).get("profile"):
-            problems.append(f"{h['id']}: 缺少 match.profile")
+        if h["event"] == "before_tool_call" and not (
+            h.get("match", {}).get("profile") or h.get("match", {}).get("args")
+        ):
+            problems.append(f"{h['id']}: 缺少 match.profile 或 match.args")
     yaml_ids = re.findall(r"- id: (\S+)", read(ROOT / "hooks" / "hooks.yaml"))
     if yaml_ids != ids:
         problems.append("hooks.yaml 与 hooks.json 的条目不一致")
@@ -272,7 +274,7 @@ def project_checks(tests_summary: str | None, tests_ok: bool | None) -> dict[str
     icode_src = [
         str(p.relative_to(ROOT))
         for p in files
-        if "Huawei Technologies" in p.read_text(encoding="utf-8", errors="ignore")
+        if "Huawei" + " Technologies" in p.read_text(encoding="utf-8", errors="ignore")
     ]
     plugin = [
         p

@@ -43,10 +43,11 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 # The checker, the launcher and the snapshot run programs as subprocesses (as iCode's shell tool).
 "cross-validate/cv_run.py" = ["S603", "S607"]
+"cross-validate/cv_exec.py" = ["S603", "T20"]
 "cross-validate/cv_flow.py" = ["S603", "S607"]
 "cv_cli.py" = ["S603", "S607", "T20"]
 # Tests use assert and run subprocess-backed code.
-"tests/*" = ["S101", "S603", "S607"]
+"tests/*" = ["S101", "S311", "S603", "S607"]
 # The conformance checker prints its report and runs the tools it checks with.
 "scripts/*" = ["T20", "S603", "S607"]
 # The example's checks are scripts written by an alignment agent.
