@@ -871,6 +871,7 @@ STANDARDS.md                   标准清单：文档条目、本文细则、iCod
 scripts/check_standards.py     逐条核验，结果写入 CONFORMANCE.md
 scripts/live_eval.py           用真实模型跑几轮，再用变异测试衡量检查抓 bug 的能力（不是细则）
 examples/stack/                评测用的栈需求和固定的变异版本
+examples/snake_logic/          评测用的贪吃蛇逻辑：模糊的需求、预先放好的代码、由独立 agent 写的 bug 列表
 tests/                         文法、公式、四值判定、检查、需求整理的单元测试，以及端到端测试
 ```
 
@@ -899,5 +900,5 @@ cv uninstall
 模型每轮写出的命题和检查都不同，单轮的结果说明不了什么。要判断一次改动是否有效，用 `scripts/live_eval.py` 跑几轮再看平均抓到率：每轮在 bwrap 隔离的新目录里完整跑一次工作流，然后把冻结的检查在 15 个改坏的栈上重放。需要 Linux、bwrap、iCode 和一份模型配置，一轮约 40 到 60 分钟，已跑完的轮次不会重跑。
 
 ```
-python3 scripts/live_eval.py --model-yaml model.yaml --out eval-out --rounds 3
+python3 scripts/live_eval.py --example examples/stack --model-yaml model.yaml --out eval-out --rounds 3
 ```

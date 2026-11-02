@@ -5,6 +5,8 @@ same bugs. {a} is the name of the list attribute in the model's code, because al
 read it.
 """
 
+import re
+
 REFERENCE = """class Stack:
     def __init__(self):
         self.{a} = []
@@ -52,3 +54,16 @@ def source(name: str, attribute: str) -> str:
 
 
 NAMES = tuple(_EDITS)
+TARGET = "stack.py"
+_ATTRIBUTE = re.compile(r"self\.(\w+)\s*(?::[^=\n]+)?=\s*(?:\[\]|list\(\))")
+
+
+def attribute_of(code: str) -> str | None:
+    match = _ATTRIBUTE.search(code)
+    return match.group(1) if match else None
+
+
+def prepare(code: str) -> dict[str, str] | None:
+    """Every mutant's source for this round's code, or None when they cannot be made from it."""
+    attribute = attribute_of(code)
+    return {name: source(name, attribute) for name in NAMES} if attribute else None

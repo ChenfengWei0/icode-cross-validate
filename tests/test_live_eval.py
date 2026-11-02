@@ -58,7 +58,12 @@ def test_reference_is_right_and_every_mutant_is_wrong():
     [("self._items = []", "_items"), ("self.data: list = []", "data"), ("self.xs = list()", "xs")],
 )
 def test_list_attribute_is_found(line, name):
-    assert EV.ATTRIBUTE.search(line).group(1) == name
+    assert MUT.attribute_of(line) == name
+
+
+def test_stack_mutants_need_a_list_attribute():
+    assert set(MUT.prepare("self._items = []")) == set(MUT.NAMES)
+    assert MUT.prepare("self.head = None") is None
 
 
 def results(checks, **props):
@@ -66,10 +71,10 @@ def results(checks, **props):
 
 
 def test_how_a_bug_was_found():
-    trace = {"kind": "trace", "result": "确定违反"}
-    crash = {"kind": "trace", "result": "失败（检查）"}
-    command = {"kind": "command", "result": "失败（检查）"}
-    passed = {"kind": "trace", "result": "推定为真"}
+    trace = {"proposition": "R1", "kind": "trace", "result": "确定违反"}
+    crash = {"proposition": "R1", "kind": "trace", "result": "失败（检查）"}
+    command = {"proposition": "R1", "kind": "command", "result": "失败（检查）"}
+    passed = {"proposition": "R1", "kind": "trace", "result": "推定为真"}
     assert EV.how_caught(results([trace, crash], R1="确定违反")) == "公式"
     assert EV.how_caught(results([command, crash], R1="失败（检查）")) == "脚本"
     assert EV.how_caught(results([crash], R1="失败（检查）")) == "崩溃"
@@ -79,10 +84,43 @@ def test_how_a_bug_was_found():
 
 def test_summary():
     clean = results([], R1="通过")
-    bad = results([{"kind": "trace", "result": "确定违反"}], R1="确定违反")
+    bad = results([{"proposition": "R1", "kind": "trace", "result": "确定违反"}], R1="确定违反")
     report = {"conclusion": "比对通过", "conclusion_reason": "x", "stats": {}}
-    one = EV.summarize_round(report, {"correct": clean, "a": bad, "b": clean, "c": None}, "_items")
+    one = EV.summarize_round(report, {"correct": clean, "a": bad, "b": clean, "c": None})
     assert one["control_clean"] is True and one["mutants"] == {"a": "公式", "b": "漏掉", "c": "没有结果"}
-    assert EV.summarize_round(report, {"correct": bad}, "_items")["control_clean"] is False
-    text = EV.summarize([one, EV.summarize_round(None, {}, None)])
+    assert EV.summarize_round(report, {"correct": bad})["control_clean"] is False
+    text = EV.summarize([one, EV.summarize_round(None, {}, "不重放的原因")])
+    assert "不重放的原因" in text
     assert "1/3" in text and "平均抓到率：33%（1 轮）" in text and "没有结论" in text and "b 1 次" in text
+
+
+def test_a_failure_the_correct_code_also_has_does_not_count():
+    control = results([], R1="确定违反", R2="推定为真")
+    same = results([{"proposition": "R1", "kind": "trace", "result": "确定违反"}], R1="确定违反", R2="推定为真")
+    assert EV.how_caught(same, control) == "漏掉"
+    new = {"proposition": "R2", "kind": "command", "result": "失败（检查）"}
+    both = results(
+        [{"proposition": "R1", "kind": "trace", "result": "确定违反"}, new], R1="确定违反", R2="失败（检查）"
+    )
+    assert EV.how_caught(both, control) == "脚本"
+
+
+def load_snake():
+    return EV.load_mutants(ROOT / "examples" / "snake_logic")
+
+
+def test_snake_bugs_apply_and_stay_importable():
+    snake = load_snake()
+    assert len(snake.BUGS) == 20
+    assert len({b["name"] for b in snake.BUGS}) == 20
+    made = snake.prepare(snake.SEED)
+    for bug in snake.BUGS:
+        assert snake.SEED.count(bug["old"]) == 1, bug["name"]
+        assert made[bug["name"]] != snake.SEED
+        compile(made[bug["name"]], bug["name"], "exec")
+
+
+def test_snake_round_is_not_measured_when_the_code_changed():
+    snake = load_snake()
+    assert snake.prepare(snake.SEED + "\n") is not None
+    assert snake.prepare(snake.SEED + "# changed\n") is None

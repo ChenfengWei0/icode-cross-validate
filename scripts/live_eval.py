@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Measure the checks on real runs: full workflow in a box, then the frozen checks on broken stacks.
 
-    python3 scripts/live_eval.py --model-yaml model.yaml --out eval-out --rounds 3
+    python3 scripts/live_eval.py --example examples/stack --model-yaml model.yaml --out eval-out --rounds 3
+
+An example directory holds goal.txt, mutants.py and, optionally, seed/: files put in the project before
+the workflow starts. mutants.py gives TARGET, the file to replace, and prepare(code), which returns the
+source of every mutant for this round's code, or None when they cannot be made from it.
 
 A round that finished is not run again, so a stopped evaluation continues where it was. Each round has
 its own home and project, and bwrap shows it nothing else: no other round, no real home, no environment.
@@ -13,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import importlib.util
 import json
 import os
 import re
@@ -23,14 +28,17 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "examples" / "stack"))
-import mutants as MUT  # noqa: E402
-
 REPO_IN_BOX = "/cv-repo"
 ROUND_SECONDS = 9000
 REPLAY_SECONDS = 3600
 FOUND = {"失败（检查）", "确定违反"}
-ATTRIBUTE = re.compile(r"self\.(\w+)\s*(?::[^=\n]+)?=\s*(?:\[\]|list\(\))")
+
+
+def load_mutants(example: Path):
+    spec = importlib.util.spec_from_file_location(f"mutants_{example.name}", example / "mutants.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def box(cwd: Path, bound: Path, home: Path, *command: str) -> list[str]:
@@ -54,11 +62,14 @@ def box(cwd: Path, bound: Path, home: Path, *command: str) -> list[str]:
     ]  # fmt: skip
 
 
-def prepare(round_dir: Path, model_yaml: Path) -> Path:
+def prepare(round_dir: Path, model_yaml: Path, seed: Path | None = None) -> Path:
     home = round_dir / "home"
     models = home / ".chrys" / "models"
     models.mkdir(parents=True)
-    (round_dir / "proj").mkdir()
+    if seed and seed.is_dir():
+        shutil.copytree(seed, round_dir / "proj")
+    else:
+        (round_dir / "proj").mkdir()
     (round_dir / "tmp").mkdir()
     text = model_yaml.read_text(encoding="utf-8")
     profile_id = re.search(r"^id:\s*(\S+)", text, re.MULTILINE).group(1)
@@ -109,20 +120,25 @@ def replay(mutant_dir: Path) -> None:
     (mutant_dir / "results.json").write_text(json.dumps(results, ensure_ascii=False, default=str), encoding="utf-8")
 
 
-def how_caught(results: dict) -> str:
-    """Formula: the checker judged a formula. Crash: a trace run exited non-zero, so no formula was judged."""
-    if not any(p["result"] in FOUND for p in results["propositions"].values()):
+def how_caught(results: dict, control: dict | None = None) -> str:
+    """How a mutant was found. Only failures the correct code does not also have count.
+
+    Formula: the checker judged a formula. Script: a command check failed. Crash: a trace run exited
+    non-zero, so no formula was judged.
+    """
+    known = {k for k, v in (control or {"propositions": {}})["propositions"].items() if v["result"] in FOUND}
+    new = {k for k, v in results["propositions"].items() if v["result"] in FOUND} - known
+    if not new:
         return "对齐失败" if any(p["result"] == "失败（对齐）" for p in results["propositions"].values()) else "漏掉"
-    outcomes = {(c["kind"], c["result"]) for c in results["checks"]}
+    outcomes = {(c["kind"], c["result"]) for c in results["checks"] if c["proposition"] in new}
     if ("trace", "确定违反") in outcomes:
         return "公式"
     return "脚本" if ("command", "失败（检查）") in outcomes else "崩溃"
 
 
-def replay_all(round_dir: Path, home: Path, run: Path, code: Path, attribute: str, workers: int = 5) -> dict:
+def replay_all(round_dir: Path, home: Path, run: Path, code: Path, mutants: dict[str, str], workers: int = 5) -> dict:
     base = round_dir / "mutants"
-    sources = {"correct": code.read_text(encoding="utf-8")}
-    sources.update({name: MUT.source(name, attribute) for name in MUT.NAMES})
+    sources = {"correct": code.read_text(encoding="utf-8"), **mutants}
 
     def one(item: tuple[str, str]) -> tuple[str, dict | None]:
         name, source = item
@@ -131,7 +147,7 @@ def replay_all(round_dir: Path, home: Path, run: Path, code: Path, attribute: st
         shutil.copytree(
             code.parent, target / "w", dirs_exist_ok=True, ignore=shutil.ignore_patterns(".git", "__pycache__")
         )
-        (target / "w" / "stack.py").write_text(source, encoding="utf-8")
+        (target / "w" / code.name).write_text(source, encoding="utf-8")
         shutil.copytree(
             run, target / "run", ignore=shutil.ignore_patterns("traces", "results.json", "report.*", "__pycache__")
         )
@@ -151,17 +167,19 @@ def replay_all(round_dir: Path, home: Path, run: Path, code: Path, attribute: st
         return dict(pool.map(one, sources.items()))
 
 
-def summarize_round(report: dict | None, replays: dict, attribute: str | None) -> dict:
+def summarize_round(report: dict | None, replays: dict, note: str | None = None) -> dict:
     out: dict = {"conclusion": (report or {}).get("conclusion"), "reason": (report or {}).get("conclusion_reason")}
     out["stats"] = (report or {}).get("stats")
-    out["attribute"] = attribute
+    out["note"] = note
     if not replays:
         return out
     control = replays.get("correct")
     out["control_clean"] = bool(control) and not any(
         p["result"] in (*FOUND, "失败（对齐）") for p in control["propositions"].values()
     )
-    out["mutants"] = {name: how_caught(r) if r else "没有结果" for name, r in replays.items() if name != "correct"}
+    out["mutants"] = {
+        name: how_caught(r, control) if r else "没有结果" for name, r in replays.items() if name != "correct"
+    }
     return out
 
 
@@ -178,7 +196,8 @@ def summarize(rounds: list[dict]) -> str:
             rates.append(len(caught) / len(mutants))
         count = f"{len(caught)}/{len(mutants)}" if mutants else "—"
         lines.append(
-            f"| {k} | {r.get('conclusion') or '没有结论'} | {r.get('control_clean', '—')} | {count} | {formula} | {'、'.join(escaped) or '—'} |"
+            f"| {k} | {r.get('conclusion') or '没有结论'} | {r.get('control_clean', '—')} | {count} | {formula} "
+            f"| {'、'.join(escaped) or r.get('note') or '—'} |"
         )
     lines.append("")
     if rates:
@@ -188,21 +207,25 @@ def summarize(rounds: list[dict]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def evaluate_round(round_dir: Path, model_yaml: Path, goal: str) -> dict:
+def evaluate_round(round_dir: Path, model_yaml: Path, example: Path) -> dict:
+    mut = load_mutants(example)
+    goal = (example / "goal.txt").read_text(encoding="utf-8").strip()
     if round_dir.exists():
         shutil.rmtree(round_dir)  # no summary means it did not finish
     round_dir.mkdir(parents=True)
-    home = prepare(round_dir, model_yaml)
+    home = prepare(round_dir, model_yaml, example / "seed")
     run_workflow(round_dir, home, goal)
     run = run_dir_of(home)
     report_path = run / "report.json" if run else None
     report = json.loads(report_path.read_text(encoding="utf-8")) if report_path and report_path.exists() else None
-    code = round_dir / "proj" / "stack.py"
+    code = round_dir / "proj" / mut.TARGET
     frozen = run / "align" / "checks.frozen.json" if run else None
-    match = ATTRIBUTE.search(code.read_text(encoding="utf-8")) if code.exists() else None
-    if not (match and frozen and frozen.exists()):
-        return summarize_round(report, {}, None)
-    return summarize_round(report, replay_all(round_dir, home, run, code, match.group(1)), match.group(1))
+    if not (code.exists() and frozen and frozen.exists()):
+        return summarize_round(report, {}, "没有代码或没有冻结的检查，不重放")
+    mutants = mut.prepare(code.read_text(encoding="utf-8"))
+    if mutants is None:
+        return summarize_round(report, {}, "变异版本无法从这一轮的代码生成，不重放")
+    return summarize_round(report, replay_all(round_dir, home, run, code, mutants))
 
 
 def main() -> int:
@@ -210,7 +233,7 @@ def main() -> int:
     parser.add_argument("--model-yaml", type=Path)
     parser.add_argument("--out", type=Path)
     parser.add_argument("--rounds", type=int, default=3)
-    parser.add_argument("--goal", type=Path, default=ROOT / "examples" / "stack" / "goal.txt")
+    parser.add_argument("--example", type=Path, default=ROOT / "examples" / "stack")
     parser.add_argument("--replay", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.replay:
@@ -218,7 +241,6 @@ def main() -> int:
         return 0
     if not (args.model_yaml and args.out):
         parser.error("需要 --model-yaml 和 --out")
-    goal = args.goal.read_text(encoding="utf-8").strip()
     rounds = []
     for k in range(1, args.rounds + 1):
         done = args.out / f"round-{k}.json"
@@ -226,7 +248,7 @@ def main() -> int:
             rounds.append(json.loads(done.read_text(encoding="utf-8")))
             continue
         args.out.mkdir(parents=True, exist_ok=True)
-        result = evaluate_round((args.out / f"round-{k}").resolve(), args.model_yaml.resolve(), goal)
+        result = evaluate_round((args.out / f"round-{k}").resolve(), args.model_yaml.resolve(), args.example.resolve())
         done.write_text(json.dumps(result, ensure_ascii=False, indent=1), encoding="utf-8")
         rounds.append(result)
         text = summarize(rounds)
