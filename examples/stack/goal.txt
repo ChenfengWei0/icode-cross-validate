@@ -1,0 +1,1 @@
+用 Python 实现一个栈，写在 stack.py 中，不需要界面。类 Stack 提供 push(x)、pop() 和 size()。pop() 返回最后压入的元素；空栈调用 pop() 抛出 IndexError。例如：依次 push(1)、push(2) 后，pop() 得到 2，size() 等于 1。

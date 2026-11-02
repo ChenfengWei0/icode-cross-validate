@@ -583,7 +583,8 @@ def parse_sentence(sentence: str, decls: Decls) -> tuple[dict, str]:
         for tok in actions:
             if tok.kind != "word" or decls.kind(tok.text) != "动作":
                 raise FormulaError(f"{tok.text} 不是已声明的动作")
-        q = _state(c[1:], decls)
+        # 细则 8.5: the call of an example is made after the actions; only a command check can make it.
+        q = _call(c[2:], decls)[0] if _is(c[1] if len(c) > 1 else None, "调用") else _state(c[1:], decls)
         steps = [F.node("eq", F.node("at", F.term(F.ACTION), k=k), F.lit(tok.text)) for k, tok in enumerate(actions)]
         return F.implies(F.mk_and(at_state(s, 0), *steps), at_state(q, len(actions))), "从出发"
 

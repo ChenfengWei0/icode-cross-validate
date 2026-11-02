@@ -819,3 +819,46 @@ def test_crash_report_shows_what_the_script_printed(decls, tmp_path):
 
     detail = RP._detail(out)
     assert "退出码 2" in detail and "push did not add an item" in detail
+
+
+def test_example_may_end_with_a_call():
+    """细则 8.5 the natural translation of an example was refused, and with it the only direct test of size()."""
+    original = "依次操作后，size() 等于 1。类 Stack 提供 push。空的 size。"
+    sentences = [
+        {
+            "id": "S1",
+            "text": "依次操作后，size() 等于 1。",
+            "labels": ["示例"],
+            "quotable": ["依次操作后，size() 等于 1。"],
+        }
+    ]
+    extra = "接口  size\n"
+    start = "从 深度(栈) 等于 0 出发，依次执行 压入1、弹出一次，之后"
+    block = "编号  {}\n来源  翻译\n依据  「依次操作后，size() 等于 1」\n句子  {}"
+    out = stack_checked_with(
+        extra,
+        [
+            block.format("R1", f"{start} 调用 `size`() 得到 1"),
+            block.format("R2", f"{start} 调用 `size`() 得到 2"),
+            block.format("R3", f"{start} 调用 `nope`() 得到 1"),
+            block.format("R4", f"{start} 调用 `size`() 失败"),
+        ],
+        sentences,
+        original,
+    )
+    assert out["R1"]["problems"] == [] and out["R1"]["pattern"] == "从出发" and out["R1"]["class"] == "具体事实"
+    assert "`size`() = 1" in out["R1"]["formula"] and "动作₁" in out["R1"]["formula"]
+    assert any("数 2" in x for x in out["R2"]["problems"])
+    assert any("nope" in x for x in out["R3"]["problems"])
+    assert out["R4"]["problems"] == []
+    # A trace cannot make the call, and the trial run says so before freezing.
+    with pytest.raises(M.AlignError, match="command"):
+        M.judge(
+            out["R1"]["tree"],
+            [
+                {"值": {"深度(栈)": 0}, "动作": "压入1"},
+                {"值": {"深度(栈)": 1}, "动作": "弹出一次"},
+                {"值": {"深度(栈)": 0}},
+            ],
+            {"栈"},
+        )
