@@ -1,7 +1,7 @@
 # 标准核验结果
 
 由 `python3 scripts/check_standards.py` 生成，标准见 `STANDARDS.md`。
-合计：通过 135，未通过 0，跳过 0，人工 1。
+合计：通过 136，未通过 0，跳过 0，人工 1。
 
 
 ## D：文档要求
@@ -81,30 +81,31 @@
 | 细则 10.3 | 通过 | 5 个测试：test_weak_next、test_nnf_duals、test_no_contradiction_is_true、test_primes_anywhere 等 |
 | 细则 10.4 | 通过 | 1 个测试：test_classes |
 | 细则 11.1 | 通过 | 1 个测试：test_align_input |
-| 细则 11.2 | 通过 | 3 个测试：test_validate_format、test_no_links_in_align、test_flagged_checks_cover_nothing |
+| 细则 11.2 | 通过 | 4 个测试：test_validate_format、test_no_links_in_align、test_flagged_checks_cover_nothing、test_verify_checks_in_checks_json |
 | 细则 11.3 | 通过 | 1 个测试：test_command_checks |
 | 细则 11.4 | 通过 | 1 个测试：test_trace_checks |
-| 细则 11.5 | 通过 | 1 个测试：test_coverage |
-| 细则 11.6 | 通过 | 3 个测试：test_coverage、test_no_alignment_answer、test_flagged_checks_cover_nothing |
-| 细则 11.7 | 通过 | 5 个测试：test_validate_format、test_revision_paths、test_preflight_reports_the_format_and_nothing_else、test_preflight_goes_back_once 等 |
+| 细则 11.5 | 通过 | 2 个测试：test_coverage、test_verify_checks_in_checks_json |
+| 细则 11.6 | 通过 | 4 个测试：test_coverage、test_no_alignment_answer、test_flagged_checks_cover_nothing、test_verify_checks_in_checks_json |
+| 细则 11.7 | 通过 | 6 个测试：test_validate_format、test_revision_paths、test_preflight_reports_the_format_and_nothing_else、test_preflight_goes_back_once 等 |
 | 细则 11.8 | 通过 | 4 个测试：test_budget、test_truncation、test_budget_cut_does_not_pass、test_judging_is_bounded |
 | 细则 11.9 | 通过 | 1 个测试：test_frozen_checks_run |
 | 细则 11.10 | 通过 | 2 个测试：test_alignment_prompt_asks_for_strict_checks_that_reach_the_hard_cases、test_prompts_ask_for_reachable_states_and_meaning_not_names |
+| 细则 11.11 | 通过 | 10 个测试：test_fragment、test_generated_code_agrees_with_the_checker、test_absent_individual_makes_atoms_false、test_cbmc_decides_for_every_input 等 |
 | 细则 12.1 | 通过 | 1 个测试：test_trace_format |
 | 细则 12.2 | 通过 | 2 个测试：test_time_convention、test_prompt_shows_where_an_event_goes |
 | 细则 12.3 | 通过 | 5 个测试：test_values、test_no_contradiction_is_true、test_big_integers_exact、test_missing_key_after_violation 等 |
-| 细则 12.4 | 通过 | 4 个测试：test_entity_constant、test_listed_entities、test_only_individual_may_be_keyed_by_entity_name、test_entity_with_no_individual_now_is_false_not_an_error |
+| 细则 12.4 | 通过 | 5 个测试：test_entity_constant、test_listed_entities、test_only_individual_may_be_keyed_by_entity_name、test_entity_with_no_individual_now_is_false_not_an_error 等 |
 | 细则 12.5 | 通过 | 1 个测试：test_scenario |
 | 细则 12.6 | 通过 | 6 个测试：test_nonzero_exit_fails、test_empty_trace、test_trace_must_be_a_regular_file、test_partial_line_after_timeout 等 |
 | 细则 13.1 | 通过 | 2 个测试：test_four_values、test_progression_matches_reference |
 | 细则 13.2 | 通过 | 3 个测试：test_four_values、test_facts_at_state_zero、test_progression_matches_reference |
-| 细则 13.3 | 通过 | 4 个测试：test_trace_checks、test_order、test_missing_key_after_violation、test_coverage_failure_does_not_hide_a_failure |
+| 细则 13.3 | 通过 | 5 个测试：test_trace_checks、test_order、test_missing_key_after_violation、test_coverage_failure_does_not_hide_a_failure 等 |
 | 细则 13.4 | 通过 | 2 个测试：test_trace_checks、test_crash_counterexample_kept |
 | 细则 13.5 | 通过 | 2 个测试：test_liveness、test_liveness_mark |
 | 细则 13.6 | 通过 | 1 个测试：test_trace_checks |
-| 细则 13.7 | 通过 | 1 个测试：test_antecedent_never_fired |
+| 细则 13.7 | 通过 | 2 个测试：test_antecedent_never_fired、test_harness_cannot_hide_or_skip_the_check |
 | 细则 13.8 | 通过 | 2 个测试：test_what_is_only_for_a_person_catches_nothing、test_what_the_requirement_leaves_open_is_for_a_person |
-| 细则 14.1 | 通过 | 2 个测试：test_conclusions、test_report_text_cannot_forge_conclusion |
+| 细则 14.1 | 通过 | 3 个测试：test_conclusions、test_report_text_cannot_forge_conclusion、test_verify_in_the_checker_and_the_report |
 | 细则 14.2 | 通过 | 3 个测试：test_tampering_is_detected、test_conclusions、test_what_the_requirement_leaves_open_is_for_a_person |
 | 细则 14.3 | 通过 | 1 个测试：test_turn_and_session_triggers |
 | 细则 15.1 | 通过 | 3 个测试：test_init_rules、test_ignored_project_is_not_git、test_hooks_find_enabled_parent |
@@ -154,8 +155,8 @@
 | --- | --- | --- |
 | P-1 | 通过 | 只导入标准库 |
 | P-2 | 通过 | ruff target-version = py310，workflow 声明 requires-python >=3.10 |
-| P-3 | 通过 | ruff check：All checks passed!；ruff format：53 files already formatted |
-| P-4 | 通过 | 插件本体 258 KB；含 iCode 版权声明的文件：无 |
-| P-5 | 通过 | pytest：219 passed in 125.95s (0:02:05) |
-| P-6 | 通过 | 重建以来 15 个提交 |
+| P-3 | 通过 | ruff check：All checks passed!；ruff format：55 files already formatted |
+| P-4 | 通过 | 插件本体 289 KB；含 iCode 版权声明的文件：无 |
+| P-5 | 通过 | pytest：229 passed in 127.15s (0:02:07) |
+| P-6 | 通过 | 重建以来 16 个提交 |
 | P-7 | 通过 | 含令牌或密钥的文件：无 |

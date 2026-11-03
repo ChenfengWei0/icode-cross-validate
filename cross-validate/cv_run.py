@@ -16,6 +16,7 @@ from pathlib import Path
 
 import cv_monitor as M
 import cv_state as S
+import cv_verify as V
 
 EXEC = Path(__file__).resolve().parent / "cv_exec.py"
 
@@ -173,6 +174,7 @@ def run_checks(run: Path, w: Path, props: dict[str, dict], frozen: dict, entitie
     results: list[dict] = []
     # 细则 5.5: Python in a check reads bytecode only from a fresh empty prefix, never W's __pycache__.
     pycache = tempfile.mkdtemp(prefix="cv-pycache-")
+    verified: dict = {}  # 细则 11.11: one verifier run per harness, sources, steps and unwind
     for check in frozen["checks"]:
         prop = props[check["proposition"]]
         rec = {**check, "runs_detail": [], "result": None, "reason": None, "counterexample": None}
@@ -181,6 +183,17 @@ def run_checks(run: Path, w: Path, props: dict[str, dict], frozen: dict, entitie
             rec.update(result=M.ALIGN_FAILED, reason="预算用尽，未运行")
             continue
         base_env = {"CV_ALIGN": str(align_dir), "CV_W": str(w), "PYTHONPYCACHEPREFIX": pycache}
+        if check["kind"] == "verify":
+            left = max(1.0, deadline - time.monotonic())
+            out = V.run(
+                check, props, entities, w, align_dir, limits, run_command, min(check["timeout"], left), verified
+            )
+            rec["runs_detail"].append({k: out[k] for k in ("result", "reason", "scope") if k in out})
+            rec.update(result=out["result"], reason=out.get("reason"), counterexample=out.get("counterexample"))
+            rec["scope"] = out.get("scope")
+            if "triggered" in out:
+                rec["triggered"] = out["triggered"]
+            continue
         if check["kind"] == "command":
             out = run_command(
                 check["command"], w, base_env, min(check["timeout"], max(1.0, deadline - time.monotonic()))
@@ -294,6 +307,12 @@ def run_checks(run: Path, w: Path, props: dict[str, dict], frozen: dict, entitie
             count = sum(r.get(key, 0) for r in mine)
             if count:
                 notes.append(f"{count} {what}")
+        notes.extend(
+            f"验证：{r['scope']}" for r in mine if r.get("kind") == "verify" and r["result"] == M.PRESUMED_TRUE
+        )
+        found = any(r.get("kind") == "trace" and r["result"] in (M.VIOLATED, M.CHECK_FAILED) for r in mine)
+        if found and any(r.get("kind") == "verify" and r["result"] == M.PRESUMED_TRUE for r in mine):
+            notes.append("trace 检查发现了违反，verify 检查没有：驱动程序的范围可能过窄（细则 11.11）")
         fired = [r["triggered"] for r in mine if "triggered" in r]
         vacuous = bool(fired) and not any(fired)  # 细则 13.7
         if vacuous:

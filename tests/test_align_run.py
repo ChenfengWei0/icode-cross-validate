@@ -51,7 +51,7 @@ def test_coverage(decls):
     assert out["format_errors"] == []
     assert out["align_failures"] == {
         "R1": "没有任何检查",
-        "R5": "时序命题缺少 trace 检查（细则 11.5）",
+        "R5": "时序命题既没有 trace 检查，也没有 verify 检查（细则 11.5）",
         "R9": "没有任何检查",
     }
 

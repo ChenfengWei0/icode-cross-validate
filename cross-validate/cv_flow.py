@@ -9,6 +9,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+import shutil
 import stat
 import subprocess
 from pathlib import Path
@@ -21,6 +22,7 @@ import cv_report as RP
 import cv_run as RUN
 import cv_state as S
 import cv_text as T
+import cv_verify as V
 from cv_formula import Decls
 
 HERE = Path(__file__).resolve().parent
@@ -434,6 +436,24 @@ def align_prompt(state: dict) -> str:  # 算法1 第6行
         PROPOSITIONS=listing,
         W=state["w"],
         ALIGN=str(run / "align"),
+        VERIFY=_verify_note(run, props, Decls.from_json(data["decls"]).of("实体"), load_config()),
+    )
+
+
+def _verify_note(run: Path, props: list[dict], entities: set[str], config: dict) -> str:
+    """细则 11.11: which propositions a verifier can decide, and the headers to write against (stubs)."""
+    engine = config.get("verify_engine", "cbmc")
+    if shutil.which(engine) is None:
+        return f"环境中没有验证器 {engine}，不能使用 verify 检查。"
+    ids = V.write_headers(
+        run / "verify-headers", {p["id"]: p for p in props}, entities, config.get("verify_max_steps", 50), stubs=True
+    )
+    if not ids:
+        return f"环境中有验证器 {engine}，但没有命题适合 verify 检查。"
+    return (
+        f"环境中有验证器 {engine}。下列命题可以用 verify 检查：{'、'.join(ids)}。"
+        f"试验用的头文件在 `{run / 'verify-headers'}`（编译时加 `-I` 这个目录）；它们只有名字，不判定命题，"
+        "检查时程序换成真正的头文件。"
     )
 
 
@@ -456,7 +476,8 @@ def align_check(state: dict, answer: str | None, attempt: int, config: dict) -> 
     else:
         S.write_text(run / f"align-answer-{attempt}.txt", answer)
         data, error = A.load(run / "align")
-        result = A.validate(data, props, config) if error is None else {"format_errors": [error]}
+        entities = Decls.from_json(S.read_json(run / "propositions.json")["decls"]).of("实体")
+        result = A.validate(data, props, config, entities) if error is None else {"format_errors": [error]}
         if not result["format_errors"] and attempt == 1:
             result["format_errors"] = _preflight(state, run, props, result, config)
         if result["format_errors"] and attempt == 1:

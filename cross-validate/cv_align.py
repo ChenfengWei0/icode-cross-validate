@@ -6,8 +6,10 @@ import json
 from pathlib import Path
 
 import cv_state as S
+import cv_verify as V
 
-KINDS = ("command", "trace")
+KINDS = ("command", "trace", "verify")
+PROGRAM_JUDGED = ("trace", "verify")  # 细则 11.5: the program judges the generated formula
 
 
 def load(align_dir: Path) -> tuple[dict | None, str | None]:
@@ -15,6 +17,10 @@ def load(align_dir: Path) -> tuple[dict | None, str | None]:
     links = sorted(str(x.relative_to(align_dir)) for x in Path(align_dir).rglob("*") if x.is_symlink())
     if links:
         return None, f"align/ 中不得有符号链接：{'、'.join(links[:5])}"
+    # 细则 11.11: only the headers the checker generates may answer `#include <cv_Rn.h>`.
+    shadows = sorted(str(x.relative_to(align_dir)) for x in Path(align_dir).rglob("cv_*.h"))
+    if shadows:
+        return None, f"align/ 中不得有名为 cv_*.h 的文件，它们由程序生成：{'、'.join(shadows[:5])}"
     path = Path(align_dir) / "checks.json"
     if not path.exists():
         return None, "对齐 agent 没有写出 align/checks.json"
@@ -24,7 +30,7 @@ def load(align_dir: Path) -> tuple[dict | None, str | None]:
         return None, f"align/checks.json 不能解析：{e}"
 
 
-def validate(data, props: dict[str, dict], limits: dict) -> dict:
+def validate(data, props: dict[str, dict], limits: dict, entities: set[str] | frozenset = frozenset()) -> dict:
     """细则 11.2–11.6. `props` are the propositions handed to the alignment agent, by id.
 
     Format errors go back to the agent once (细则 11.7); missing coverage is an alignment failure of
@@ -54,7 +60,14 @@ def validate(data, props: dict[str, dict], limits: dict) -> dict:
             errors.append(f"{where}.proposition 不是交给你的命题编号：{pid!r}")
             continue
         if kind not in KINDS:
-            errors.append(f"{where}.kind 只能是 command 或 trace")
+            errors.append(f"{where}.kind 只能是 command、trace 或 verify")
+            continue
+        if kind == "verify":
+            check, problem = _verify_check(item, props[pid], limits, entities)
+            if problem:
+                errors.append(f"{where}：{problem}")
+                continue
+            checks.append({"index": len(checks), **check})
             continue
         if not isinstance(command, str) or not command.strip():
             errors.append(f"{where}.command 应是非空字符串")
@@ -103,9 +116,55 @@ def validate(data, props: dict[str, dict], limits: dict) -> dict:
         if not mine:
             others = any(c["proposition"] == pid for c in checks)
             failures[pid] = "只有超出需求的输入的检查（unstated_inputs）" if others else "没有任何检查"
-        elif prop["class"] == "时序" and not any(c["kind"] == "trace" for c in mine):
-            failures[pid] = "时序命题缺少 trace 检查（细则 11.5）"
+        elif prop["class"] == "时序" and not any(c["kind"] in PROGRAM_JUDGED for c in mine):
+            failures[pid] = "时序命题既没有 trace 检查，也没有 verify 检查（细则 11.5）"
     return {"format_errors": errors, "checks": checks, "bindings": bindings, "align_failures": failures}
+
+
+def _int(value, low: int, high: int | None = None) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= low and (high is None or value <= high)
+
+
+def _verify_check(item: dict, prop: dict, limits: dict, entities) -> tuple[dict, str | None]:
+    """细则 11.11 checks.json 中的写法."""
+    unfit = V.problems(prop["tree"], set(entities)) if prop.get("tree") is not None else ["命题没有公式"]
+    if unfit:
+        return {}, f"{prop['id']} 不能用 verify 检查：{'；'.join(unfit)}"
+    sources = item.get("sources")
+    if not isinstance(sources, list) or not sources or not all(isinstance(x, str) and x for x in sources):
+        return {}, "sources 应是非空的文件列表"
+    if any(
+        V.SOURCE.match(x) is None or ".." in Path(x.removeprefix("$CV_ALIGN/")).parts or x.startswith("/")
+        for x in sources
+    ):
+        return {}, "sources 只能是 $CV_ALIGN/ 开头的文件或 W 中的相对路径，不得含 .."
+    if all(x.startswith("$CV_ALIGN/") for x in sources):
+        return {}, "sources 至少要有一个 W 中的文件：verify 检查的是主任务的代码，不是另写的模型"
+    max_steps = limits.get("verify_max_steps", 50)
+    if not _int(item.get("steps"), 1, max_steps):
+        return {}, f"steps 应是 1 到 {max_steps} 的整数"
+    if not _int(item.get("unwind"), 1):
+        return {}, "unwind 应是正整数"
+    cap = limits.get("verify_timeout", 300)
+    timeout = item.get("timeout", cap)
+    if not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or not 0 < timeout <= cap:
+        return {}, f"timeout 应是不超过 {cap} 的正数"
+    unstated = item.get("unstated_inputs", False)
+    if not isinstance(unstated, bool):
+        return {}, "unstated_inputs 只能是 true 或 false"
+    form = item.get("form", "")
+    return {
+        "proposition": prop["id"],
+        "form": form if isinstance(form, str) else "",
+        "kind": "verify",
+        "command": "",
+        "sources": sources,
+        "steps": item["steps"],
+        "unwind": item["unwind"],
+        "runs": 1,
+        "timeout": timeout,
+        "unstated_inputs": unstated,
+    }, None
 
 
 def freeze(run: Path, result: dict) -> None:

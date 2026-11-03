@@ -99,7 +99,12 @@ def _detail(r: dict) -> str:
     parts.extend(r.get("notes") or [])  # 细则 14.1 第 3 项: timeouts, truncation
     cex = r.get("counterexample")
     if cex:
-        if "actions" in cex:
+        if cex.get("engine"):  # 细则 11.11: a counterexample from the verifier, over the recorded states
+            shown = json.dumps([st["值"] for st in cex.get("last_states", [])[-3:]], ensure_ascii=False)
+            parts.append(
+                f"反例（{_plain(cex['engine'], 20)}）：状态 {cex.get('state')}，最后的状态 {_plain(shown, 400)}"
+            )
+        elif "actions" in cex:
             acts = [a for a in cex["actions"] if a is not None]
             shown = acts if len(acts) <= 12 else ["…", *acts[-12:]]
             seq = f"动作序列（共 {len(acts)} 步）{json.dumps(shown, ensure_ascii=False)}"
@@ -143,6 +148,13 @@ def build(run: Path, extra: dict, config: dict) -> dict:
         "by_result": {},
         "vacuous": 0,
         "unstated": sum(bool(p.get("unstated")) for p in accepted),
+        "verified": len(
+            {
+                c["proposition"]
+                for c in results.get("checks", [])
+                if c.get("kind") == "verify" and c.get("result") in (M.PRESUMED_TRUE, M.VIOLATED)
+            }
+        ),
         "unstated_inputs": 0,
     }
     prop_results = results.get("propositions", {})
@@ -256,6 +268,8 @@ def render(data: dict) -> str:
         out.append("- 结果：" + "，".join(f"{k} {v} 条" for k, v in order))
     if s.get("vacuous"):
         out.append(f"- 其中前件从未成立、实际没有被检验 {s['vacuous']} 条（细则 13.7）")
+    if s.get("verified"):
+        out.append(f"- 由验证器在给定步数内考察了全部输入的命题 {s['verified']} 条（细则 11.11）")
     if s.get("unstated"):
         out.append(f"- 其中需求未说明 {s['unstated']} 条，结果不计入比对结论（细则 13.8）")
     if s.get("unstated_inputs"):
