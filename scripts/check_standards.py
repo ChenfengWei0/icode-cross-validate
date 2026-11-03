@@ -25,7 +25,8 @@ PASS, FAIL, SKIP, MANUAL = "通过", "未通过", "跳过", "人工"
 BASE_COMMIT = "5cef5be"  # the last commit of the previous design; the rebuild starts after it
 MANUAL_RULES = {"9.4": "“一条命题只说一件事”无法机械判断，只在提示中要求（README 细则 9.4、第 18 节）"}
 DEVIATIONS = {"17.1": ["6.1"], "17.2": ["8.9"], "17.3": ["10.3"], "17.4": ["11.5"], "17.5": ["16.1", "16.6"],
-              "17.6": ["15.4", "6.3"], "17.7": ["7.1"], "17.8": ["14.2"]}  # fmt: skip
+              "17.6": ["15.4", "6.3"], "17.7": ["7.1"], "17.8": ["14.2"],
+              "17.11": ["13.8", "14.2"]}  # fmt: skip
 
 
 def read(path: Path) -> str:

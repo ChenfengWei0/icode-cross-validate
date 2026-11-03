@@ -27,9 +27,32 @@ def conclusion(data: dict, max_discard_ratio: float) -> tuple[str, str]:
         return NO_CONCLUSION, "没有命题进入检查"
     if submitted and data["stats"]["discarded"] / submitted > max_discard_ratio:
         return NO_CONCLUSION, f"被丢弃的命题超过提交总数的 {max_discard_ratio:.0%}"
-    if any(r["result"] in M.FAILING for r in data["results"].values()):
+    # 细则 14.2, 13.8: a reading the requirement does not decide is for a person to confirm.
+    if any(r["result"] in M.FAILING and not r.get("unstated") for r in data["results"].values()):
         return FAILED, "至少一条命题的结果是失败或确定违反"
     return PASSED, "没有命题失败或被确定违反"
+
+
+def to_confirm(results: dict, accepted: list[dict]) -> list[str]:
+    """细则 13.8: what a person has to look at, one line each; none of it decides the conclusion."""
+    found = (*M.FAILING, M.PRESUMED_FALSE)
+    lines = []
+    for p in sorted(accepted, key=lambda p: _num(p["id"])):
+        r = results.get(p["id"], {})
+        if p.get("unstated") and r.get("result") in found:
+            detail = _detail(r)
+            lines.append(
+                f"{p['id']}（需求未说明）{p['sentence']}：{r['result']}。依据：{_plain(p['basis'])}"
+                + (f"；{detail}" if detail else "")
+            )
+        for c in r.get("unstated_inputs", []):
+            if c["result"] in found:
+                detail = _detail(c)
+                lines.append(
+                    f"{p['id']}（超出需求的输入，检查「{_plain(c.get('form') or '', 40)}」）{p['sentence']}："
+                    f"{c['result']}" + (f"；{detail}" if detail else "")
+                )
+    return lines
 
 
 def _num(pid: str) -> int:
@@ -43,7 +66,9 @@ def _rows(props: list[dict], results: dict, forms: dict) -> list[dict]:
         rows.append(
             {
                 "ids": [p["id"]],
-                "source": p["source"] + ("（未套用句式）" if p.get("pattern") == "未套用句式" else ""),
+                "source": p["source"]
+                + ("（未套用句式）" if p.get("pattern") == "未套用句式" else "")
+                + ("（需求未说明）" if p.get("unstated") else ""),
                 "result": r.get("result", "未检查"),
                 "form": "、".join(forms.get(p["id"], [])) or "—",
                 "liveness": p.get("liveness", False),
@@ -117,11 +142,14 @@ def build(run: Path, extra: dict, config: dict) -> dict:
         "discarded": len(discarded),
         "by_result": {},
         "vacuous": 0,
+        "unstated": sum(bool(p.get("unstated")) for p in accepted),
+        "unstated_inputs": 0,
     }
     prop_results = results.get("propositions", {})
     for r in prop_results.values():
         stats["by_result"][r["result"]] = stats["by_result"].get(r["result"], 0) + 1
         stats["vacuous"] += 1 if r.get("vacuous") else 0
+        stats["unstated_inputs"] += len(r.get("unstated_inputs", []))
     data = {
         "title": TITLE,
         "run": run.name,
@@ -140,6 +168,7 @@ def build(run: Path, extra: dict, config: dict) -> dict:
         "stopped": extra.get("stopped"),
         "w_changes": extra.get("w_changes", {}),
         "suspect_names": extra.get("suspect_names", []),
+        "to_confirm": to_confirm(prop_results, accepted),
     }
     data["conclusion"], data["conclusion_reason"] = conclusion(data, config["max_discard_ratio"])
     return data
@@ -203,6 +232,14 @@ def render(data: dict) -> str:
         discarded = sorted(data["discarded"], key=lambda p: _num(p["id"]))
         out.extend(f"- {p['id'] or '（无编号）'}　{p['sentence']}：{'；'.join(p['problems'])}" for p in discarded)
         out.append("")
+    if data["to_confirm"]:
+        out.append("## 需要人确认")
+        out.append(
+            "下面的命题或输入，需求没有规定代码该怎样，命题和代码可能只是读法不同。结果不计入比对结论（细则 13.8），"
+            "请判断是补充需求还是修改代码。"
+        )
+        out.extend(f"- {line}" for line in data["to_confirm"])
+        out.append("")
     if data["bindings"]:
         out.append("## 绑定")
         for name, what in data["bindings"].items():
@@ -219,6 +256,10 @@ def render(data: dict) -> str:
         out.append("- 结果：" + "，".join(f"{k} {v} 条" for k, v in order))
     if s.get("vacuous"):
         out.append(f"- 其中前件从未成立、实际没有被检验 {s['vacuous']} 条（细则 13.7）")
+    if s.get("unstated"):
+        out.append(f"- 其中需求未说明 {s['unstated']} 条，结果不计入比对结论（细则 13.8）")
+    if s.get("unstated_inputs"):
+        out.append(f"- 超出需求的输入的检查 {s['unstated_inputs']} 项，结果不计入比对结论（细则 13.8）")
     out.append("")
     if data["notes"]:
         out.append("## 注")
@@ -229,6 +270,8 @@ def render(data: dict) -> str:
     presumed_false = [pid for pid, r in data["results"].items() if r["result"] == M.PRESUMED_FALSE]
     if presumed_false:
         out.append(f"推定为假不计入未通过，单独列出：{'、'.join(sorted(presumed_false, key=_num))}（细则 14.2）。")
+    if data["to_confirm"]:
+        out.append(f"另有 {len(data['to_confirm'])} 处需要人确认，不计入结论，见“需要人确认”。")
     out.append("")
     out.append("## 说明")
     out.append(

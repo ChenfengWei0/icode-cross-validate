@@ -155,7 +155,8 @@ def how_caught(results: dict, control: dict | None = None) -> str:
     non-zero, so no formula was judged.
     """
     known = {k for k, v in (control or {"propositions": {}})["propositions"].items() if v["result"] in FOUND}
-    new = {k for k, v in results["propositions"].items() if v["result"] in FOUND} - known
+    # 细则 13.8: what is only for a person to confirm does not decide the conclusion, so it catches nothing.
+    new = {k for k, v in results["propositions"].items() if v["result"] in FOUND and not v.get("unstated")} - known
     if not new:
         return "对齐失败" if any(p["result"] == "失败（对齐）" for p in results["propositions"].values()) else "漏掉"
     outcomes = {(c["kind"], c["result"]) for c in results["checks"] if c["proposition"] in new}
@@ -198,12 +199,13 @@ def replay_all(round_dir: Path, home: Path, run: Path, code: Path, mutants: dict
 def summarize_round(report: dict | None, replays: dict, note: str | None = None) -> dict:
     out: dict = {"conclusion": (report or {}).get("conclusion"), "reason": (report or {}).get("conclusion_reason")}
     out["stats"] = (report or {}).get("stats")
+    out["to_confirm"] = len((report or {}).get("to_confirm") or [])
     out["note"] = note
     if not replays:
         return out
     control = replays.get("correct")
     out["control_clean"] = bool(control) and not any(
-        p["result"] in (*FOUND, "失败（对齐）") for p in control["propositions"].values()
+        p["result"] in (*FOUND, "失败（对齐）") and not p.get("unstated") for p in control["propositions"].values()
     )
     out["mutants"] = {
         name: how_caught(r, control) if r else "没有结果" for name, r in replays.items() if name != "correct"
@@ -212,7 +214,10 @@ def summarize_round(report: dict | None, replays: dict, note: str | None = None)
 
 
 def summarize(rounds: list[dict]) -> str:
-    lines = ["| 轮 | 结论 | 正确代码无误报 | 抓到 | 其中公式判定 | 漏掉 |", "| --- | --- | --- | --- | --- | --- |"]
+    lines = [
+        "| 轮 | 结论 | 需要人确认 | 正确代码无误报 | 抓到 | 其中公式判定 | 漏掉 |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
+    ]
     rates, missed = [], collections.Counter()
     for k, r in enumerate(rounds, 1):
         mutants = r.get("mutants") or {}
@@ -224,7 +229,8 @@ def summarize(rounds: list[dict]) -> str:
             rates.append(len(caught) / len(mutants))
         count = f"{len(caught)}/{len(mutants)}" if mutants else "—"
         lines.append(
-            f"| {k} | {r.get('conclusion') or '没有结论'} | {r.get('control_clean', '—')} | {count} | {formula} "
+            f"| {k} | {r.get('conclusion') or '没有结论'} | {r.get('to_confirm', '—')} "
+            f"| {r.get('control_clean', '—')} | {count} | {formula} "
             f"| {'、'.join(escaped) or r.get('note') or '—'} |"
         )
     lines.append("")

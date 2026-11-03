@@ -278,7 +278,9 @@ def run_checks(run: Path, w: Path, props: dict[str, dict], frozen: dict, entitie
             rec["timeouts"] = timeouts
     by_prop: dict[str, dict] = {}
     for pid in props:
-        mine = [r for r in results if r["proposition"] == pid]
+        # 细则 13.8: checks on inputs the requirement does not define are shown, not taken into the worst.
+        aside = [r for r in results if r["proposition"] == pid and r.get("unstated_inputs")]
+        mine = [r for r in results if r["proposition"] == pid and not r.get("unstated_inputs")]
         # 细则 13.3: a coverage failure takes part in the worst; it does not hide what a check found.
         if pid in frozen["align_failures"]:
             mine.append({"result": M.ALIGN_FAILED, "reason": frozen["align_failures"][pid], "counterexample": None})
@@ -302,6 +304,11 @@ def run_checks(run: Path, w: Path, props: dict[str, dict], frozen: dict, entitie
             "counterexample": cexs[0] if cexs else None,
             "notes": notes,
             **({"vacuous": True} if vacuous else {}),
+            **({"unstated": True} if props[pid].get("unstated") else {}),
         }
+        if aside:
+            by_prop[pid]["unstated_inputs"] = [
+                {k: r.get(k) for k in ("index", "form", "result", "reason", "counterexample")} for r in aside
+            ]
     shutil.rmtree(pycache, ignore_errors=True)
     return {"checks": results, "propositions": by_prop}

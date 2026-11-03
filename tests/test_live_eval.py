@@ -125,3 +125,13 @@ def test_snake_round_is_not_measured_when_the_code_changed():
     assert snake.MODE == "积累" and not hasattr(MUT, "MODE")
     assert snake.prepare(snake.SEED + "\n") is not None
     assert snake.prepare(snake.SEED + "# changed\n") is None
+
+
+def test_what_is_only_for_a_person_catches_nothing():
+    """细则 13.8 a failure of a marked reading neither catches a bug nor makes the correct code unclean."""
+    marked = results([{"proposition": "R1", "kind": "trace", "result": "确定违反"}], R1="确定违反")
+    marked["propositions"]["R1"]["unstated"] = True
+    assert EV.how_caught(marked) == "漏掉"
+    report = {"conclusion": "比对通过", "conclusion_reason": "x", "stats": {}, "to_confirm": ["R1 …"]}
+    one = EV.summarize_round(report, {"correct": marked})
+    assert one["control_clean"] is True and one["to_confirm"] == 1

@@ -14,6 +14,7 @@ ASCII_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]+")
 SUBSCRIPT = re.compile(r"_\d+\b")
 EXCEPTION_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:Error|Exception)(?![A-Za-z0-9_])")
 REASON = re.compile(r"^〔([^〕]+)〕\s*(.+)$")
+UNSTATED = "〔需求未说明〕"  # 细则 7.3: a reading the requirement does not decide; checked, not counted (细则 13.8)
 CN_DIGIT = {"零": 0, "〇": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
 CN_UNIT = {"十": 10, "百": 100, "千": 1000, "万": 10000}
 QUOTE_NUMBER = re.compile(r"[-−]?[0-9０-９]+(?:[.．][0-9０-９]+)?|[零〇一二两三四五六七八九十百千万]+")
@@ -306,6 +307,12 @@ def _check(all_parsed: dict, parsed: dict, sentences: list[dict], original: str)
                 problems.append(f"清单项 {m.group(1)} 不是九项之一")
             elif pid not in checklist.get(m.group(1), {}).get("ids", []):
                 problems.append(f"清单段的 {m.group(1)} 一项没有列出 {pid}")
+            if m and m.group(2).startswith(UNSTATED):  # 细则 7.3, 13.8
+                rec["unstated"] = True
+                if not m.group(2)[len(UNSTATED) :].strip():
+                    problems.append(f"{UNSTATED} 之后要写明需求没说什么、这里按哪种读法处理")
+        elif UNSTATED in rec["basis"]:
+            problems.append(f"只有推理命题可以标 {UNSTATED}：翻译照原话，原话说了的就不是未说明")
         rec.update(pattern=pattern, tree=tree, problems=problems)
         if tree is not None:
             rec["formula"] = F.to_text(tree)

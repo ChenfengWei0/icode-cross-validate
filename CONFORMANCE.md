@@ -1,7 +1,7 @@
 # 标准核验结果
 
 由 `python3 scripts/check_standards.py` 生成，标准见 `STANDARDS.md`。
-合计：通过 133，未通过 0，跳过 0，人工 1。
+合计：通过 135，未通过 0，跳过 0，人工 1。
 
 
 ## D：文档要求
@@ -62,7 +62,7 @@
 | 细则 6.3 | 通过 | 2 个测试：test_goal_requirement、test_quotable |
 | 细则 7.1 | 通过 | 4 个测试：test_glued_ambiguity、test_names_round_trip、test_interfaces_on_one_line、test_declarations |
 | 细则 7.2 | 通过 | 4 个测试：test_checklist_in_prompt、test_checklist_ids_exist、test_interrupted_output_is_named、test_checklist |
-| 细则 7.3 | 通过 | 2 个测试：test_decorated_fields_and_lost_blocks、test_propositions |
+| 细则 7.3 | 通过 | 4 个测试：test_decorated_fields_and_lost_blocks、test_unstated_reading_is_marked、test_prompts_ask_for_reachable_states_and_meaning_not_names、test_propositions |
 | 细则 8.1 | 通过 | 3 个测试：test_lexing、test_bad_numbers_in_formulas、test_bad_numbers_in_sentences |
 | 细则 8.2 | 通过 | 1 个测试：test_terms |
 | 细则 8.3 | 通过 | 2 个测试：test_atoms、test_glued_ambiguity |
@@ -72,7 +72,7 @@
 | 细则 8.7 | 通过 | 2 个测试：test_quantifiers、test_types_and_arity |
 | 细则 8.8 | 通过 | 2 个测试：test_reserved_words、test_reserved_words_in_prompt |
 | 细则 8.9 | 通过 | 1 个测试：test_snake_propositions |
-| 细则 9.1 | 通过 | 20 个测试：test_snake_example_passes、test_fields_and_ids、test_parse_and_unpatterned、test_declared_and_bound 等 |
+| 细则 9.1 | 通过 | 21 个测试：test_snake_example_passes、test_fields_and_ids、test_parse_and_unpatterned、test_declared_and_bound 等 |
 | 细则 9.2 | 通过 | 3 个测试：test_checklist_ids_exist、test_rewrite_checks_new_declarations、test_declarations |
 | 细则 9.3 | 通过 | 4 个测试：test_revision_paths、test_rewrite_checks_new_declarations、test_rewrite_keeps_every_proposition、test_renumbered_duplicate_keeps_the_other |
 | 细则 9.4 | 人工 | “一条命题只说一件事”无法机械判断，只在提示中要求（README 细则 9.4、第 18 节） |
@@ -81,15 +81,15 @@
 | 细则 10.3 | 通过 | 5 个测试：test_weak_next、test_nnf_duals、test_no_contradiction_is_true、test_primes_anywhere 等 |
 | 细则 10.4 | 通过 | 1 个测试：test_classes |
 | 细则 11.1 | 通过 | 1 个测试：test_align_input |
-| 细则 11.2 | 通过 | 2 个测试：test_validate_format、test_no_links_in_align |
+| 细则 11.2 | 通过 | 3 个测试：test_validate_format、test_no_links_in_align、test_flagged_checks_cover_nothing |
 | 细则 11.3 | 通过 | 1 个测试：test_command_checks |
 | 细则 11.4 | 通过 | 1 个测试：test_trace_checks |
 | 细则 11.5 | 通过 | 1 个测试：test_coverage |
-| 细则 11.6 | 通过 | 2 个测试：test_coverage、test_no_alignment_answer |
+| 细则 11.6 | 通过 | 3 个测试：test_coverage、test_no_alignment_answer、test_flagged_checks_cover_nothing |
 | 细则 11.7 | 通过 | 5 个测试：test_validate_format、test_revision_paths、test_preflight_reports_the_format_and_nothing_else、test_preflight_goes_back_once 等 |
 | 细则 11.8 | 通过 | 4 个测试：test_budget、test_truncation、test_budget_cut_does_not_pass、test_judging_is_bounded |
 | 细则 11.9 | 通过 | 1 个测试：test_frozen_checks_run |
-| 细则 11.10 | 通过 | 1 个测试：test_alignment_prompt_asks_for_strict_checks_that_reach_the_hard_cases |
+| 细则 11.10 | 通过 | 2 个测试：test_alignment_prompt_asks_for_strict_checks_that_reach_the_hard_cases、test_prompts_ask_for_reachable_states_and_meaning_not_names |
 | 细则 12.1 | 通过 | 1 个测试：test_trace_format |
 | 细则 12.2 | 通过 | 1 个测试：test_time_convention |
 | 细则 12.3 | 通过 | 5 个测试：test_values、test_no_contradiction_is_true、test_big_integers_exact、test_missing_key_after_violation 等 |
@@ -103,8 +103,9 @@
 | 细则 13.5 | 通过 | 2 个测试：test_liveness、test_liveness_mark |
 | 细则 13.6 | 通过 | 1 个测试：test_trace_checks |
 | 细则 13.7 | 通过 | 1 个测试：test_antecedent_never_fired |
+| 细则 13.8 | 通过 | 2 个测试：test_what_is_only_for_a_person_catches_nothing、test_what_the_requirement_leaves_open_is_for_a_person |
 | 细则 14.1 | 通过 | 2 个测试：test_conclusions、test_report_text_cannot_forge_conclusion |
-| 细则 14.2 | 通过 | 2 个测试：test_tampering_is_detected、test_conclusions |
+| 细则 14.2 | 通过 | 3 个测试：test_tampering_is_detected、test_conclusions、test_what_the_requirement_leaves_open_is_for_a_person |
 | 细则 14.3 | 通过 | 1 个测试：test_turn_and_session_triggers |
 | 细则 15.1 | 通过 | 3 个测试：test_init_rules、test_ignored_project_is_not_git、test_hooks_find_enabled_parent |
 | 细则 15.2 | 通过 | 2 个测试：test_record_hook_filters、test_append_ids_and_lock |
@@ -129,6 +130,7 @@
 | 细则 17.8 | 通过 | 偏离说明，核验其实现细则 14.2 |
 | 细则 17.9 | 通过 | 1 个测试：test_translation_of_a_rule_and_an_example |
 | 细则 17.10 | 通过 | 1 个测试：test_state_dependent_needs_a_time |
+| 细则 17.11 | 通过 | 偏离说明，核验其实现细则 13.8、14.2 |
 
 ## I：iCode 扩展规范
 
@@ -153,7 +155,7 @@
 | P-1 | 通过 | 只导入标准库 |
 | P-2 | 通过 | ruff target-version = py310，workflow 声明 requires-python >=3.10 |
 | P-3 | 通过 | ruff check：All checks passed!；ruff format：53 files already formatted |
-| P-4 | 通过 | 插件本体 252 KB；含 iCode 版权声明的文件：无 |
-| P-5 | 通过 | pytest：213 passed in 119.01s (0:01:59) |
-| P-6 | 通过 | 重建以来 12 个提交 |
+| P-4 | 通过 | 插件本体 257 KB；含 iCode 版权声明的文件：无 |
+| P-5 | 通过 | pytest：218 passed in 121.81s (0:02:01) |
+| P-6 | 通过 | 重建以来 13 个提交 |
 | P-7 | 通过 | 含令牌或密钥的文件：无 |

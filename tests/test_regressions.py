@@ -883,3 +883,98 @@ def test_entity_with_no_individual_now_is_false_not_an_error(decls):
     # Several individuals are still a mistake when the entity is used as a constant.
     with pytest.raises(M.AlignError, match="恰有一个个体"):
         M.judge(tree, [state(["f", "g"], {"长度(蛇)": 2})], ENT)
+
+
+# ---------------------------------------------------------------------------------------------------
+# Correct snake code failed in all three rounds of the accumulation evaluation (2026-11-03)
+# ---------------------------------------------------------------------------------------------------
+
+
+def test_unstated_reading_is_marked():
+    """细则 7.3 9.1 a reading the requirement does not decide is marked, with what it chose; only for reasoning."""
+
+    def block(pid, source, basis):
+        return f"编号  {pid}\n来源  {source}\n依据  {basis}\n句子  总是 深度(栈) 不小于 0"
+
+    out = stack_checked(
+        [
+            block("R1", "推理", "〔不变式〕〔需求未说明〕需求没说空栈的深度，这里按 0 处理"),
+            block("R2", "推理", "〔不变式〕〔需求未说明〕 "),
+            block("R3", "翻译", "「类 Stack 提供 push」〔需求未说明〕"),
+            block("R4", "推理", "〔不变式〕理由"),
+        ]
+    )
+    assert out["R1"]["problems"] == [] and out["R1"]["unstated"] is True
+    assert any("之后要写明" in x for x in out["R2"]["problems"])
+    assert any("只有推理命题" in x for x in out["R3"]["problems"])
+    assert out["R4"]["problems"] == [] and "unstated" not in out["R4"]
+
+
+def test_flagged_checks_cover_nothing(decls):
+    """细则 11.2 11.6 a check on inputs the requirement leaves open is extra; it never stands in for a check."""
+    import cv_align as A
+
+    data = {
+        "bindings": {},
+        "checks": [
+            {"proposition": "R1", "kind": "command", "command": "x", "unstated_inputs": True},
+            {"proposition": "R9", "kind": "command", "command": "x"},
+            {"proposition": "R9", "kind": "command", "command": "x", "unstated_inputs": "yes"},
+            {"proposition": "R5", "kind": "trace", "command": "x", "runs": 1},
+            {"proposition": "R5", "kind": "trace", "command": "y", "runs": 1, "unstated_inputs": True},
+        ],
+    }
+    out = A.validate(data, props(decls), LIMITS)
+    assert any("unstated_inputs" in e for e in out["format_errors"])
+    assert "unstated_inputs" in out["align_failures"]["R1"]
+    assert "R9" not in out["align_failures"] and "R5" not in out["align_failures"]
+    assert [c["unstated_inputs"] for c in out["checks"]] == [True, False, False, True]
+
+
+def test_what_the_requirement_leaves_open_is_for_a_person(decls, tmp_path):
+    """细则 13.8 14.2 17.11 a marked reading or an input the requirement leaves open is shown, not counted."""
+    import cv_report as REPORT
+
+    run, w = tmp_path / "run", tmp_path / "w"
+    (run / "align").mkdir(parents=True)
+    w.mkdir()
+    p = props(decls)
+    p["R1"] = {**p["R1"], "unstated": True}
+    checks = [
+        {"proposition": "R1", "kind": "command", "command": "echo into the tail cell; exit 1"},
+        {"proposition": "R9", "kind": "command", "command": "exit 0"},
+        {"proposition": "R9", "kind": "command", "command": "echo empty board; exit 1", "unstated_inputs": True},
+        {"proposition": "R5", "kind": "command", "command": "exit 0"},
+    ]
+    out = RUN.run_checks(run, w, p, frozen_for(checks), ENT, LIMITS)["propositions"]
+    assert out["R1"]["result"] == M.CHECK_FAILED and out["R1"]["unstated"] is True
+    assert out["R9"]["result"] == M.PASSED and out["R9"]["unstated_inputs"][0]["result"] == M.CHECK_FAILED
+    assert "unstated" not in out["R9"] and "unstated_inputs" not in out["R5"]
+    data = {"results": out, "stats": {"submitted": 3, "discarded": 0}}
+    assert REPORT.conclusion(data, 0.5)[0] == REPORT.PASSED
+
+    accepted = [
+        {"id": pid, "source": "推理", "basis": "〔存在〕〔需求未说明〕没说", "sentence": f"句{pid}", "formula": "f"}
+        | ({"unstated": True} if pid == "R1" else {})
+        for pid in ("R1", "R5", "R9")
+    ]
+    lines = REPORT.to_confirm(out, accepted)
+    assert len(lines) == 2 and "into the tail cell" in lines[0] and "empty board" in lines[1]
+    S.write_json(run / "propositions.json", {"propositions": [{**a, "problems": []} for a in accepted]})
+    S.write_json(run / "results.json", {"propositions": out})
+    text = REPORT.render(REPORT.build(run, {}, {"max_discard_ratio": 0.5}))
+    assert "## 需要人确认" in text and "**比对通过**" in text and "需求未说明 1 条" in text
+    assert "推理（需求未说明）" in text and "超出需求的输入的检查 1 项" in text
+
+    # An ordinary failure still decides.
+    out["R5"]["result"] = M.VIOLATED
+    assert REPORT.conclusion(data, 0.5)[0] == REPORT.FAILED
+
+
+def test_prompts_ask_for_reachable_states_and_meaning_not_names():
+    """细则 11.10 7.3 a script searched the code for 撞墙, put food on the snake and built boards of 0 cells."""
+    prompts = Path(FLOW.__file__).parent / "prompts"
+    align = (prompts / "align.md").read_text(encoding="utf-8")
+    for phrase in ("看含义，不看名字", "只走正常使用能到达的状态", '"unstated_inputs": true', "不要直接改内部字段"):
+        assert phrase in align
+    assert "〔需求未说明〕" in (prompts / "propose.md").read_text(encoding="utf-8")

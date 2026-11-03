@@ -79,6 +79,10 @@ def validate(data, props: dict[str, dict], limits: dict) -> dict:
         ):
             errors.append(f"{where}.timeout 应是不超过 {limits['check_timeout']} 的正数")
             continue
+        unstated = item.get("unstated_inputs", False)
+        if not isinstance(unstated, bool):
+            errors.append(f"{where}.unstated_inputs 只能是 true 或 false")
+            continue
         form = item.get("form", "")
         checks.append(
             {
@@ -89,13 +93,16 @@ def validate(data, props: dict[str, dict], limits: dict) -> dict:
                 "command": command,
                 "runs": runs if kind == "trace" else 1,
                 "timeout": timeout,
+                "unstated_inputs": unstated,
             }
         )
     failures: dict[str, str] = {}
     for pid, prop in props.items():
-        mine = [c for c in checks if c["proposition"] == pid]
+        # 细则 11.6, 13.8: checks on inputs the requirement does not define are extra; they cover nothing.
+        mine = [c for c in checks if c["proposition"] == pid and not c["unstated_inputs"]]
         if not mine:
-            failures[pid] = "没有任何检查"
+            others = any(c["proposition"] == pid for c in checks)
+            failures[pid] = "只有超出需求的输入的检查（unstated_inputs）" if others else "没有任何检查"
         elif prop["class"] == "时序" and not any(c["kind"] == "trace" for c in mine):
             failures[pid] = "时序命题缺少 trace 检查（细则 11.5）"
     return {"format_errors": errors, "checks": checks, "bindings": bindings, "align_failures": failures}
