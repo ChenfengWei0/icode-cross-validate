@@ -978,3 +978,10 @@ def test_prompts_ask_for_reachable_states_and_meaning_not_names():
     for phrase in ("看含义，不看名字", "只走正常使用能到达的状态", '"unstated_inputs": true', "不要直接改内部字段"):
         assert phrase in align
     assert "〔需求未说明〕" in (prompts / "propose.md").read_text(encoding="utf-8")
+
+
+def test_prompt_shows_where_an_event_goes():
+    """细则 12.2 a script wrote each event on the line after its step, and correct code failed 8 propositions."""
+    align = (Path(FLOW.__file__).parent / "prompts" / "align.md").read_text(encoding="utf-8")
+    for phrase in ("事件写在发生之前的那一行", "深度还是压入前的 2", "交答案前运行一次脚本"):
+        assert phrase in align

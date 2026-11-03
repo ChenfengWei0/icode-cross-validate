@@ -91,7 +91,7 @@
 | 细则 11.9 | 通过 | 1 个测试：test_frozen_checks_run |
 | 细则 11.10 | 通过 | 2 个测试：test_alignment_prompt_asks_for_strict_checks_that_reach_the_hard_cases、test_prompts_ask_for_reachable_states_and_meaning_not_names |
 | 细则 12.1 | 通过 | 1 个测试：test_trace_format |
-| 细则 12.2 | 通过 | 1 个测试：test_time_convention |
+| 细则 12.2 | 通过 | 2 个测试：test_time_convention、test_prompt_shows_where_an_event_goes |
 | 细则 12.3 | 通过 | 5 个测试：test_values、test_no_contradiction_is_true、test_big_integers_exact、test_missing_key_after_violation 等 |
 | 细则 12.4 | 通过 | 4 个测试：test_entity_constant、test_listed_entities、test_only_individual_may_be_keyed_by_entity_name、test_entity_with_no_individual_now_is_false_not_an_error |
 | 细则 12.5 | 通过 | 1 个测试：test_scenario |
@@ -155,7 +155,7 @@
 | P-1 | 通过 | 只导入标准库 |
 | P-2 | 通过 | ruff target-version = py310，workflow 声明 requires-python >=3.10 |
 | P-3 | 通过 | ruff check：All checks passed!；ruff format：53 files already formatted |
-| P-4 | 通过 | 插件本体 257 KB；含 iCode 版权声明的文件：无 |
-| P-5 | 通过 | pytest：218 passed in 121.81s (0:02:01) |
-| P-6 | 通过 | 重建以来 13 个提交 |
+| P-4 | 通过 | 插件本体 258 KB；含 iCode 版权声明的文件：无 |
+| P-5 | 通过 | pytest：219 passed in 125.95s (0:02:05) |
+| P-6 | 通过 | 重建以来 15 个提交 |
 | P-7 | 通过 | 含令牌或密钥的文件：无 |
