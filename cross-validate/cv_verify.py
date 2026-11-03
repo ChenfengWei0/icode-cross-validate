@@ -361,11 +361,12 @@ def resolve(source: str, w: Path, align_dir: Path) -> Path | None:
     return path if path.is_file() else None
 
 
-def command(engine: str, sources: list[Path], include: Path, unwind: int, out: Path) -> str:
+def command(engine: str, sources: list[Path], include: Path, unwind: int, out: Path, w: Path) -> str:
     if engine != "cbmc":
         raise ValueError(f"不支持的验证器 {engine}")
     argv = ["cbmc", "--json-ui", "--trace", "--unwind", str(unwind), "--unwinding-assertions"]
-    argv += ["-I", str(include), *map(str, sources)]
+    # The generated headers come first, so a header of the same name in W cannot answer for them.
+    argv += ["-I", str(include), "-I", str(w), *map(str, sources)]
     return " ".join(shlex.quote(a) for a in argv) + f" > {shlex.quote(str(out))} 2>&1"
 
 
@@ -522,7 +523,7 @@ def run(
             include = Path(tmp) / "include"
             write_headers(include, props, entities, check["steps"], nonce)
             out = Path(tmp) / "out.json"
-            cmd = command(engine, sources, include, check["unwind"], out)
+            cmd = command(engine, sources, include, check["unwind"], out, w)
             done = run_command(cmd, w, {"CV_ALIGN": str(align_dir), "CV_W": str(w)}, timeout)
             raw = out.read_text(encoding="utf-8", errors="replace") if out.exists() else ""
             cache[key] = (None if done.get("timeout") else raw, nonce)

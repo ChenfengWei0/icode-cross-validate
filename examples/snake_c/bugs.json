@@ -1,0 +1,122 @@
+[
+ {
+  "name": "turn_back_allowed",
+  "description": "玩家按下与当前方向相反的方向键时蛇会直接掉头往回走（蛇身较长时会因此撞上自己），而不是忽略这次掉头。",
+  "old": "if (DX[d] != -DX[g->direction] || DY[d] != -DY[g->direction])",
+  "new": "if (d != g->direction)"
+ },
+ {
+  "name": "up_down_swapped",
+  "description": "按上键蛇往下走、按下键蛇往上走，上下方向颠倒。",
+  "old": "static const int DY[4] = {-1, 1, 0, 0};",
+  "new": "static const int DY[4] = {1, -1, 0, 0};"
+ },
+ {
+  "name": "body_shift_forward",
+  "description": "蛇长到三节以上后，移动时身体各节都被覆盖成蛇头的位置，身体不再跟着蛇头前进。",
+  "old": "for (int i = kept; i > 0; i--)",
+  "new": "for (int i = 1; i <= kept; i++)"
+ },
+ {
+  "name": "never_grows",
+  "description": "蛇吃到食物后长度不增加，食物被吃掉但蛇始终不变长。",
+  "old": "int kept = eating ? g->length : g->length - 1;",
+  "new": "int kept = g->length - 1;"
+ },
+ {
+  "name": "eat_checks_head_not_next",
+  "description": "蛇头走到食物格子上时没有吃到食物，食物仍留在原地，蛇也不变长。",
+  "old": "int eating = g->has_food && next.x == g->food.x && next.y == g->food.y;",
+  "new": "int eating = g->has_food && head.x == g->food.x && head.y == g->food.y;"
+ },
+ {
+  "name": "food_may_spawn_on_head",
+  "description": "生成食物时没有排除蛇头所在的格子，食物可能出现在蛇头上。",
+  "old": "for (int i = 0; i < length; i++)",
+  "new": "for (int i = 1; i < length; i++)"
+ },
+ {
+  "name": "no_respawn_after_eating",
+  "description": "蛇吃掉一个食物后棋盘上就再也不会出现新的食物。",
+  "old": "    spawn_food(g);\n    if (!g->has_food)\n      g->over = 1;\n",
+  "new": "    g->has_food = 0;\n"
+ },
+ {
+  "name": "food_never_in_last_column",
+  "description": "统计空格时漏掉了最右一列，食物永远不会出现在最右一列，空格只剩最右一列时游戏会提前结束。",
+  "old": "  int free = 0;\n  for (int x = 0; x < g->width; x++)",
+  "new": "  int free = 0;\n  for (int x = 0; x < g->width - 1; x++)"
+ },
+ {
+  "name": "seed_ignored",
+  "description": "初始化时没有使用传入的随机种子，无论种子是多少，食物出现的位置序列都完全一样。",
+  "old": "g->rng = seed;",
+  "new": "g->rng = 1;"
+ },
+ {
+  "name": "right_wall_off_by_one",
+  "description": "右边界判断差一格，蛇能走出棋盘最右一列而不判定撞墙。",
+  "old": "next.x >= g->width",
+  "new": "next.x > g->width"
+ },
+ {
+  "name": "top_row_deadly",
+  "description": "上边界判断多算了一格，蛇一走进最上面一行就被判定撞墙。",
+  "old": "next.y < 0 ||",
+  "new": "next.y <= 0 ||"
+ },
+ {
+  "name": "bottom_wall_uses_width",
+  "description": "下边界误用棋盘宽度判断，在宽大于高的棋盘上蛇能从底部走出棋盘而不撞墙。",
+  "old": "next.y >= g->height",
+  "new": "next.y >= g->width"
+ },
+ {
+  "name": "tail_chase_deadly",
+  "description": "蛇头走进尾巴刚刚离开的格子时被误判为撞到自己，游戏结束。",
+  "old": "in_body(g, next, kept)",
+  "new": "in_body(g, next, g->length)"
+ },
+ {
+  "name": "no_self_collision",
+  "description": "蛇头撞到自己的身体时游戏不结束，蛇直接穿过自己。",
+  "old": " || in_body(g, next, kept)) {",
+  "new": ") {"
+ },
+ {
+  "name": "moves_after_game_over",
+  "description": "游戏结束后再调用前进，蛇仍然会按新方向继续移动。",
+  "old": "  if (g->over)\n    return STEP_OVER;\n",
+  "new": ""
+ },
+ {
+  "name": "crash_not_marked_over",
+  "description": "蛇撞墙或撞到自己时虽然返回结束，但游戏状态没有标记为结束。",
+  "old": "    g->over = 1;\n    return STEP_OVER;\n  }",
+  "new": "    return STEP_OVER;\n  }"
+ },
+ {
+  "name": "full_board_no_win",
+  "description": "蛇填满整个棋盘后游戏没有结束，玩家赢了却没有被判定游戏结束。",
+  "old": "    if (!g->has_food)\n      g->over = 1;\n",
+  "new": ""
+ },
+ {
+  "name": "restart_keeps_game_over",
+  "description": "上一局结束后用同一个游戏重新开始时，结束状态没有被清除，新游戏一开始就是结束的。",
+  "old": "  g->over = 0;\n  g->has_food = 0;",
+  "new": "  g->has_food = 0;"
+ },
+ {
+  "name": "initial_direction_left",
+  "description": "开局时蛇的初始方向朝向自己身体一侧，第一步蛇会反向往左折回，而不是向前（向右）移动。",
+  "old": "g->direction = DIR_RIGHT;",
+  "new": "g->direction = DIR_LEFT;"
+ },
+ {
+  "name": "eat_returns_moved",
+  "description": "蛇吃到食物的那一步返回的是普通移动结果，而不是吃到食物的结果。",
+  "old": "    return STEP_ATE;",
+  "new": "    return STEP_MOVED;"
+ }
+]

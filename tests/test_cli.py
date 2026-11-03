@@ -167,12 +167,15 @@ def test_history_guard(home, tmp_path, monkeypatch):
     assert verdict("cv-align", {"path": str(live / "align" / "checks.json")}) == "allow"
     assert verdict("cv-align", {"path": str(done / "align" / "checks.json")}) == "block"
     assert verdict("cv-align", {"path": str(live / "propositions.json")}) == "block"
+    # 细则 11.11: the trial headers of the running alignment, never those of a finished run.
+    assert verdict("cv-align", {"command": f"cbmc -I {live}/verify-headers h.c"}) == "allow"
+    assert verdict("cv-align", {"path": str(done / "verify-headers" / "cv_R1.h")}) == "block"
     assert verdict("cv-align", {"command": f"cat {w}/a.py; cat {done}/report.md"}, w) == "block"
     assert verdict("cv-align", {"command": f"cat {w}/a.py"}, w) == "allow"
     assert verdict("cv-align", {"path": str(done / "report.md")}, tmp_path) == "block"  # W above the state dir
     assert verdict("cv-subtask", {"path": str(done / "report.md")}) == "allow"  # its own guard refuses everything
     lines = (state / "history-reads.jsonl").read_text().splitlines()
-    assert len(lines) == 8 and json.loads(lines[0])["profile"] == "Code"
+    assert len(lines) == 9 and json.loads(lines[0])["profile"] == "Code"
 
 
 def test_turn_and_session_triggers(home, tmp_path, monkeypatch, fake_icode):

@@ -821,7 +821,8 @@ def _state_access_allowed(token: str, payload: dict) -> bool:
     # W inside the state directory is a snapshot. A W above it (say the home directory) grants nothing.
     if STATE_MENTION.search(cwd) and (path == cwd or path.startswith(cwd + os.sep)):
         return True
-    m = re.match(r"(.*/runs/[^/]+)/align(?:/|$)", path)
+    # 细则 11.11: the trial headers of verify checks sit next to align/ in the same run.
+    m = re.match(r"(.*/runs/[^/]+)/(?:align|verify-headers)(?:/|$)", path)
     return bool(m) and not Path(m.group(1), "report.md").exists()
 
 
