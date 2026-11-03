@@ -241,7 +241,7 @@ def summarize(rounds: list[dict]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def evaluate_round(round_dir: Path, model_yaml: Path, example: Path) -> dict:
+def evaluate_round(round_dir: Path, model_yaml: Path, example: Path, workers: int = 5) -> dict:
     mut = load_mutants(example)
     goal = (example / "goal.txt").read_text(encoding="utf-8").strip()
     if round_dir.exists():
@@ -262,7 +262,7 @@ def evaluate_round(round_dir: Path, model_yaml: Path, example: Path) -> dict:
     mutants = mut.prepare(code.read_text(encoding="utf-8"))
     if mutants is None:
         return summarize_round(report, {}, "变异版本无法从这一轮的代码生成，不重放")
-    return summarize_round(report, replay_all(round_dir, home, run, code, mutants))
+    return summarize_round(report, replay_all(round_dir, home, run, code, mutants, workers))
 
 
 def main() -> int:
@@ -271,6 +271,7 @@ def main() -> int:
     parser.add_argument("--out", type=Path)
     parser.add_argument("--rounds", type=int, default=3)
     parser.add_argument("--example", type=Path, default=ROOT / "examples" / "stack")
+    parser.add_argument("--workers", type=int, default=5, help="并行重放的变异版本数，内存紧时调小")
     parser.add_argument("--replay", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.replay:
@@ -285,7 +286,9 @@ def main() -> int:
             rounds.append(json.loads(done.read_text(encoding="utf-8")))
             continue
         args.out.mkdir(parents=True, exist_ok=True)
-        result = evaluate_round((args.out / f"round-{k}").resolve(), args.model_yaml.resolve(), args.example.resolve())
+        result = evaluate_round(
+            (args.out / f"round-{k}").resolve(), args.model_yaml.resolve(), args.example.resolve(), args.workers
+        )
         done.write_text(json.dumps(result, ensure_ascii=False, indent=1), encoding="utf-8")
         rounds.append(result)
         text = summarize(rounds)

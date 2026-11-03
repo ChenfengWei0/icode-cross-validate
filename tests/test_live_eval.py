@@ -111,8 +111,9 @@ def load_snake():
 
 def test_snake_bugs_apply_and_stay_importable():
     snake = load_snake()
-    assert len(snake.BUGS) == 20
-    assert len({b["name"] for b in snake.BUGS}) == 20
+    # 20 from the first batch, 15 written after the fixes for false alarms (batch 2), all from the seed alone.
+    assert len(snake.BUGS) == 35 and sum(b.get("batch") == 2 for b in snake.BUGS) == 15
+    assert len({b["name"] for b in snake.BUGS}) == 35
     made = snake.prepare(snake.SEED)
     for bug in snake.BUGS:
         assert snake.SEED.count(bug["old"]) == 1, bug["name"]

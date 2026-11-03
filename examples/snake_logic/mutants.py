@@ -2,6 +2,7 @@
 
 The bugs in bugs.json were written by an agent that saw only the requirement and seed/snake.py, not the
 checks, the rules or earlier results, so the score is not fitted to what the checks already catch.
+Batch 2 (`"batch": 2`) was written the same way after the fixes for false alarms on correct code.
 """
 
 import json

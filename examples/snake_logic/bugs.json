@@ -1,122 +1,227 @@
 [
-  {
-    "name": "left_maps_to_up",
-    "description": "“左”的方向向量被复制粘贴写成了向上，按“左”时蛇实际向上走，向右行进时按“左”也不再被当作掉头拦下。",
-    "old": "\"左\": (-1, 0)",
-    "new": "\"左\": (0, -1)"
-  },
-  {
-    "name": "initial_body_tail_first",
-    "description": "初始蛇身写成了尾在前、头在后，开局蛇头位置错一格，第一步是走进自己刚腾出的尾格。",
-    "old": "Snake([(2, 2), (1, 2)])",
-    "new": "Snake([(1, 2), (2, 2)])"
-  },
-  {
-    "name": "vertical_reversal_allowed",
-    "description": "掉头检查只比较了水平方向，蛇上下行进时可以直接反向，长度大于二时会一头撞上自己的脖子。",
-    "old": "if (dx, dy) != (-cx, -cy):",
-    "new": "if cx == 0 or dx != -cx:"
-  },
-  {
-    "name": "reversal_allowed_when_short",
-    "description": "蛇身短于三格时不拦截掉头，只有开局还没吃到食物的阶段才能反向走回尾格。",
-    "old": "if (dx, dy) != (-cx, -cy):",
-    "new": "if (dx, dy) != (-cx, -cy) or len(self.snake.body) < 3:"
-  },
-  {
-    "name": "right_wall_off_by_one",
-    "description": "右边界多放行了一格，蛇头能走到 x 等于 width 的棋盘外格子，再走一步才算撞墙。",
-    "old": "0 <= new[0] < self.width",
-    "new": "0 <= new[0] <= self.width"
-  },
-  {
-    "name": "bounds_axes_swapped",
-    "description": "撞墙判断把宽和高用反了，方形棋盘上看不出来，长方形棋盘上蛇会穿出短边或在长边内被判撞墙。",
-    "old": "0 <= new[0] < self.width and 0 <= new[1] < self.height",
-    "new": "0 <= new[0] < self.height and 0 <= new[1] < self.width"
-  },
-  {
-    "name": "dead_head_in_wall",
-    "description": "判定死亡时仍然先更新了蛇身，结束后蛇头留在墙外或与自身重叠，而不是停在撞击前的位置。",
-    "old": "self.over = True\n            return \"over\"",
-    "new": "self.snake.body = [new, *body]\n            self.over = True\n            return \"over\""
-  },
-  {
-    "name": "tail_cell_blocks",
-    "description": "自撞判断用了完整蛇身，蛇头走进这一步正好腾出来的尾格也会被判死亡。",
-    "old": "or new in body:",
-    "new": "or new in self.snake.body:"
-  },
-  {
-    "name": "second_last_passable",
-    "description": "自撞判断多切掉了一格，蛇头能穿过尾巴前面那一节身体，蛇身出现重叠而游戏继续。",
-    "old": "or new in body:",
-    "new": "or new in body[:-1]:"
-  },
-  {
-    "name": "self_collision_not_sticky",
-    "description": "撞到自己时只返回 over 却没有设置结束标记，之后转个方向还能继续走。",
-    "old": "if not (0 <= new[0] < self.width and 0 <= new[1] < self.height) or new in body:\n            self.over = True\n            return \"over\"",
-    "new": "if not (0 <= new[0] < self.width and 0 <= new[1] < self.height):\n            self.over = True\n            return \"over\"\n        if new in body:\n            return \"over\""
-  },
-  {
-    "name": "double_growth_duplicate_tail",
-    "description": "吃到食物时在保留尾巴的同时又追加了一份尾格，蛇一次长两格且蛇身里有重复坐标。",
-    "old": "self.snake.body = [new, *body]",
-    "new": "self.snake.body = [new, *body, body[-1]] if eating else [new, *body]"
-  },
-  {
-    "name": "spawn_food_before_growth",
-    "description": "吃到食物后先生成新食物再更新蛇身，新食物可能落在新蛇头上，棋盘填满时也因为还有“空格”而不结束。",
-    "old": "self.snake.body = [new, *body]\n        if eating:\n            self.food = self.spawn_food()",
-    "new": "if eating:\n            self.food = self.spawn_food()\n        self.snake.body = [new, *body]\n        if eating:"
-  },
-  {
-    "name": "food_on_tail",
-    "description": "生成食物时把尾格当成空格，食物可能刷在蛇尾上，蛇头吃它时反而被判撞到自己。",
-    "old": "not in self.snake.body]",
-    "new": "not in self.snake.body[:-1]]"
-  },
-  {
-    "name": "food_axes_swapped",
-    "description": "生成食物时宽高用反了，方形棋盘没有差别，长方形棋盘上食物可能刷到棋盘外，部分格子永远不会有食物。",
-    "old": "for x in range(self.width) for y in range(self.height)",
-    "new": "for x in range(self.height) for y in range(self.width)"
-  },
-  {
-    "name": "win_one_cell_early",
-    "description": "只剩最后一个空格时不再生成食物，游戏在棋盘还差一格填满时就提前结束。",
-    "old": "if free else None",
-    "new": "if len(free) > 1 else None"
-  },
-  {
-    "name": "full_board_not_over",
-    "description": "棋盘填满后没有结束游戏，food 变成 None 而蛇还能沿着尾格继续移动。",
-    "old": "            if self.food is None:\n                self.over = True\n",
-    "new": ""
-  },
-  {
-    "name": "full_board_crash",
-    "description": "没有处理空格列表为空的情况，吃下最后一个食物填满棋盘时抛出 IndexError。",
-    "old": "self.rng.choice(free) if free else None",
-    "new": "self.rng.choice(free)"
-  },
-  {
-    "name": "no_over_guard",
-    "description": "step 开头没有检查游戏是否已结束，死亡后转向再走一步蛇还会移动并返回 moved。",
-    "old": "if self.over:\n            return \"over\"\n        dx, dy",
-    "new": "dx, dy"
-  },
-  {
-    "name": "seed_zero_ignored",
-    "description": "用 seed or None 处理种子，默认的 seed=0 被当成没有种子，同样的种子每局食物位置都不同。",
-    "old": "random.Random(seed)",
-    "new": "random.Random(seed or None)"
-  },
-  {
-    "name": "shared_global_rng",
-    "description": "随机数用了模块级全局状态，单局正常，但两局同时进行时互相干扰，后创建的一局还会重置前一局的种子。",
-    "old": "self.rng = random.Random(seed)",
-    "new": "random.seed(seed)\n        self.rng = random"
-  }
+ {
+  "name": "left_maps_to_up",
+  "description": "“左”的方向向量被复制粘贴写成了向上，按“左”时蛇实际向上走，向右行进时按“左”也不再被当作掉头拦下。",
+  "old": "\"左\": (-1, 0)",
+  "new": "\"左\": (0, -1)"
+ },
+ {
+  "name": "initial_body_tail_first",
+  "description": "初始蛇身写成了尾在前、头在后，开局蛇头位置错一格，第一步是走进自己刚腾出的尾格。",
+  "old": "Snake([(2, 2), (1, 2)])",
+  "new": "Snake([(1, 2), (2, 2)])"
+ },
+ {
+  "name": "vertical_reversal_allowed",
+  "description": "掉头检查只比较了水平方向，蛇上下行进时可以直接反向，长度大于二时会一头撞上自己的脖子。",
+  "old": "if (dx, dy) != (-cx, -cy):",
+  "new": "if cx == 0 or dx != -cx:"
+ },
+ {
+  "name": "reversal_allowed_when_short",
+  "description": "蛇身短于三格时不拦截掉头，只有开局还没吃到食物的阶段才能反向走回尾格。",
+  "old": "if (dx, dy) != (-cx, -cy):",
+  "new": "if (dx, dy) != (-cx, -cy) or len(self.snake.body) < 3:"
+ },
+ {
+  "name": "right_wall_off_by_one",
+  "description": "右边界多放行了一格，蛇头能走到 x 等于 width 的棋盘外格子，再走一步才算撞墙。",
+  "old": "0 <= new[0] < self.width",
+  "new": "0 <= new[0] <= self.width"
+ },
+ {
+  "name": "bounds_axes_swapped",
+  "description": "撞墙判断把宽和高用反了，方形棋盘上看不出来，长方形棋盘上蛇会穿出短边或在长边内被判撞墙。",
+  "old": "0 <= new[0] < self.width and 0 <= new[1] < self.height",
+  "new": "0 <= new[0] < self.height and 0 <= new[1] < self.width"
+ },
+ {
+  "name": "dead_head_in_wall",
+  "description": "判定死亡时仍然先更新了蛇身，结束后蛇头留在墙外或与自身重叠，而不是停在撞击前的位置。",
+  "old": "self.over = True\n            return \"over\"",
+  "new": "self.snake.body = [new, *body]\n            self.over = True\n            return \"over\""
+ },
+ {
+  "name": "tail_cell_blocks",
+  "description": "自撞判断用了完整蛇身，蛇头走进这一步正好腾出来的尾格也会被判死亡。",
+  "old": "or new in body:",
+  "new": "or new in self.snake.body:"
+ },
+ {
+  "name": "second_last_passable",
+  "description": "自撞判断多切掉了一格，蛇头能穿过尾巴前面那一节身体，蛇身出现重叠而游戏继续。",
+  "old": "or new in body:",
+  "new": "or new in body[:-1]:"
+ },
+ {
+  "name": "self_collision_not_sticky",
+  "description": "撞到自己时只返回 over 却没有设置结束标记，之后转个方向还能继续走。",
+  "old": "if not (0 <= new[0] < self.width and 0 <= new[1] < self.height) or new in body:\n            self.over = True\n            return \"over\"",
+  "new": "if not (0 <= new[0] < self.width and 0 <= new[1] < self.height):\n            self.over = True\n            return \"over\"\n        if new in body:\n            return \"over\""
+ },
+ {
+  "name": "double_growth_duplicate_tail",
+  "description": "吃到食物时在保留尾巴的同时又追加了一份尾格，蛇一次长两格且蛇身里有重复坐标。",
+  "old": "self.snake.body = [new, *body]",
+  "new": "self.snake.body = [new, *body, body[-1]] if eating else [new, *body]"
+ },
+ {
+  "name": "spawn_food_before_growth",
+  "description": "吃到食物后先生成新食物再更新蛇身，新食物可能落在新蛇头上，棋盘填满时也因为还有“空格”而不结束。",
+  "old": "self.snake.body = [new, *body]\n        if eating:\n            self.food = self.spawn_food()",
+  "new": "if eating:\n            self.food = self.spawn_food()\n        self.snake.body = [new, *body]\n        if eating:"
+ },
+ {
+  "name": "food_on_tail",
+  "description": "生成食物时把尾格当成空格，食物可能刷在蛇尾上，蛇头吃它时反而被判撞到自己。",
+  "old": "not in self.snake.body]",
+  "new": "not in self.snake.body[:-1]]"
+ },
+ {
+  "name": "food_axes_swapped",
+  "description": "生成食物时宽高用反了，方形棋盘没有差别，长方形棋盘上食物可能刷到棋盘外，部分格子永远不会有食物。",
+  "old": "for x in range(self.width) for y in range(self.height)",
+  "new": "for x in range(self.height) for y in range(self.width)"
+ },
+ {
+  "name": "win_one_cell_early",
+  "description": "只剩最后一个空格时不再生成食物，游戏在棋盘还差一格填满时就提前结束。",
+  "old": "if free else None",
+  "new": "if len(free) > 1 else None"
+ },
+ {
+  "name": "full_board_not_over",
+  "description": "棋盘填满后没有结束游戏，food 变成 None 而蛇还能沿着尾格继续移动。",
+  "old": "            if self.food is None:\n                self.over = True\n",
+  "new": ""
+ },
+ {
+  "name": "full_board_crash",
+  "description": "没有处理空格列表为空的情况，吃下最后一个食物填满棋盘时抛出 IndexError。",
+  "old": "self.rng.choice(free) if free else None",
+  "new": "self.rng.choice(free)"
+ },
+ {
+  "name": "no_over_guard",
+  "description": "step 开头没有检查游戏是否已结束，死亡后转向再走一步蛇还会移动并返回 moved。",
+  "old": "if self.over:\n            return \"over\"\n        dx, dy",
+  "new": "dx, dy"
+ },
+ {
+  "name": "seed_zero_ignored",
+  "description": "用 seed or None 处理种子，默认的 seed=0 被当成没有种子，同样的种子每局食物位置都不同。",
+  "old": "random.Random(seed)",
+  "new": "random.Random(seed or None)"
+ },
+ {
+  "name": "shared_global_rng",
+  "description": "随机数用了模块级全局状态，单局正常，但两局同时进行时互相干扰，后创建的一局还会重置前一局的种子。",
+  "old": "self.rng = random.Random(seed)",
+  "new": "random.seed(seed)\n        self.rng = random"
+ },
+ {
+  "name": "never_grows",
+  "description": "蛇吃到食物后长度不增加，永远保持初始长度。",
+  "old": "body = self.snake.body if eating else self.snake.body[:-1]",
+  "new": "body = self.snake.body[:-1]",
+  "batch": 2
+ },
+ {
+  "name": "food_not_respawned",
+  "description": "蛇吃掉食物后不会生成新的食物，食物仍停留在已被吃掉的位置。",
+  "old": "self.food = self.spawn_food()\n            if self.food is None:",
+  "new": "if self.spawn_food() is None:",
+  "batch": 2
+ },
+ {
+  "name": "ate_reported_as_moved",
+  "description": "蛇吃到食物时 step 返回 'moved' 而不是 'ate'，玩家得不到吃到食物的反馈。",
+  "old": "return \"ate\"",
+  "new": "return \"moved\"",
+  "batch": 2
+ },
+ {
+  "name": "wraps_around_walls",
+  "description": "蛇撞墙不会死，而是从对面的边穿出来继续前进。",
+  "old": "new = (x + dx, y + dy)",
+  "new": "new = ((x + dx) % self.width, (y + dy) % self.height)",
+  "batch": 2
+ },
+ {
+  "name": "vertical_axis_inverted",
+  "description": "按“上”蛇往下走、按“下”蛇往上走，上下方向颠倒。",
+  "old": "\"上\": (0, -1), \"下\": (0, 1)",
+  "new": "\"上\": (0, 1), \"下\": (0, -1)",
+  "batch": 2
+ },
+ {
+  "name": "starts_moving_backwards",
+  "description": "蛇开局的移动方向朝向自己的尾巴，第一步就掉头倒着走。",
+  "old": "self.direction = \"右\"",
+  "new": "self.direction = \"左\"",
+  "batch": 2
+ },
+ {
+  "name": "turn_condition_inverted",
+  "description": "转向判断写反：正常的转弯被忽略，只有掉头才会被接受。",
+  "old": "if (dx, dy) != (-cx, -cy):",
+  "new": "if (dx, dy) == (-cx, -cy):",
+  "batch": 2
+ },
+ {
+  "name": "food_never_in_last_column",
+  "description": "食物永远不会出现在最右边一列，且该列以外的格子被占满时就提前判定没有空位。",
+  "old": "for x in range(self.width) for y",
+  "new": "for x in range(self.width - 1) for y",
+  "batch": 2
+ },
+ {
+  "name": "ate_one_tick_late",
+  "description": "蛇头走到食物上时没有吃掉它，要再走一步才算吃到并变长。",
+  "old": "eating = new == self.food",
+  "new": "eating = self.snake.head == self.food",
+  "batch": 2
+ },
+ {
+  "name": "step_after_over_returns_none",
+  "description": "游戏结束后再调用 step 返回 None，而不是继续报告 'over'。",
+  "old": "if self.over:\n            return \"over\"",
+  "new": "if self.over:\n            return",
+  "batch": 2
+ },
+ {
+  "name": "drops_neck_instead_of_tail",
+  "description": "蛇移动时去掉的是紧跟蛇头的那一节而不是尾巴，尾巴留在原地，蛇身断开。",
+  "old": "else self.snake.body[:-1]",
+  "new": "else self.snake.body[1:]",
+  "batch": 2
+ },
+ {
+  "name": "reverse_turn_kills",
+  "description": "玩家按与当前方向相反的方向时游戏直接结束，而不是忽略这次按键。",
+  "old": "        if (dx, dy) != (-cx, -cy):\n            self.direction = direction",
+  "new": "        if (dx, dy) != (-cx, -cy):\n            self.direction = direction\n        else:\n            self.over = True",
+  "batch": 2
+ },
+ {
+  "name": "food_not_random",
+  "description": "食物总是出现在按顺序扫描到的第一个空格（最左上角的空位），位置完全可预测。",
+  "old": "return self.rng.choice(free) if free else None",
+  "new": "return free[0] if free else None",
+  "batch": 2
+ },
+ {
+  "name": "top_wall_missing",
+  "description": "蛇可以穿过上边界走到棋盘外面而不会死。",
+  "old": "and 0 <= new[1] < self.height",
+  "new": "and new[1] < self.height",
+  "batch": 2
+ },
+ {
+  "name": "no_self_collision",
+  "description": "蛇头撞到自己的身体不会结束游戏，蛇可以穿过自己。",
+  "old": " or new in body:",
+  "new": ":",
+  "batch": 2
+ }
 ]
