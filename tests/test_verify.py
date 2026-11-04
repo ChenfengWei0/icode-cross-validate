@@ -325,3 +325,13 @@ def test_running_out_of_memory_is_named():
     )
     out = V.read_result("SAT checker ran out of memory\nOut of memory", "R1", {"op": "T"}, "", set())
     assert out["result"] == M.ALIGN_FAILED and "verify_memory_mb" in out["reason"]
+
+
+def test_trial_headers_start_small():
+    """细则 11.11 the trial header's step count is a small default the agent may change; the checked header
+    always uses the check's steps."""
+    tree = G.parse_sentence("一旦 游戏 结束，此后一直 游戏 结束", snake_decls())[0]
+    trial = V.stub("R7", tree, 6)
+    assert "#ifndef CV_R7_STEPS" in trial and "#define CV_R7_STEPS 6" in trial
+    real = V.header("R7", tree, 12, "", "n")
+    assert "#undef CV_R7_STEPS\n#define CV_R7_STEPS 12" in real

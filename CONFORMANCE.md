@@ -90,7 +90,7 @@
 | 细则 11.8 | 通过 | 5 个测试：test_budget、test_truncation、test_budget_cut_does_not_pass、test_judging_is_bounded 等 |
 | 细则 11.9 | 通过 | 1 个测试：test_frozen_checks_run |
 | 细则 11.10 | 通过 | 2 个测试：test_alignment_prompt_asks_for_strict_checks_that_reach_the_hard_cases、test_prompts_ask_for_reachable_states_and_meaning_not_names |
-| 细则 11.11 | 通过 | 11 个测试：test_fragment、test_generated_code_agrees_with_the_checker、test_absent_individual_makes_atoms_false、test_cbmc_decides_for_every_input 等 |
+| 细则 11.11 | 通过 | 12 个测试：test_fragment、test_generated_code_agrees_with_the_checker、test_absent_individual_makes_atoms_false、test_cbmc_decides_for_every_input 等 |
 | 细则 12.1 | 通过 | 1 个测试：test_trace_format |
 | 细则 12.2 | 通过 | 2 个测试：test_time_convention、test_prompt_shows_where_an_event_goes |
 | 细则 12.3 | 通过 | 5 个测试：test_values、test_no_contradiction_is_true、test_big_integers_exact、test_missing_key_after_violation 等 |
@@ -156,7 +156,7 @@
 | P-1 | 通过 | 只导入标准库 |
 | P-2 | 通过 | ruff target-version = py310，workflow 声明 requires-python >=3.10 |
 | P-3 | 通过 | ruff check：All checks passed!；ruff format：56 files already formatted |
-| P-4 | 通过 | 插件本体 291 KB；含 iCode 版权声明的文件：无 |
-| P-5 | 通过 | pytest：230 passed in 117.29s (0:01:57) |
-| P-6 | 通过 | 重建以来 19 个提交 |
+| P-4 | 通过 | 插件本体 292 KB；含 iCode 版权声明的文件：无 |
+| P-5 | 通过 | pytest：231 passed in 116.64s (0:01:56) |
+| P-6 | 通过 | 重建以来 20 个提交 |
 | P-7 | 通过 | 含令牌或密钥的文件：无 |

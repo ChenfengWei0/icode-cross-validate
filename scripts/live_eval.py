@@ -32,6 +32,7 @@ ROOT = Path(__file__).resolve().parents[1]
 REPO_IN_BOX = "/cv-repo"
 ROUND_SECONDS = 9000
 REPLAY_SECONDS = 3600
+BOX_MEMORY_MB = 5120  # the local model holds 36 GB of 42
 FOUND = {"失败（检查）", "确定违反"}
 
 
@@ -45,7 +46,10 @@ def load_mutants(example: Path):
 def box(cwd: Path, bound: Path, home: Path, *command: str) -> list[str]:
     """Only `bound`, read-only system directories and the iCode install are visible."""
     real = Path(os.environ["HOME"])
+    # Every process in the box, the agent's own verifier trials included, gets at most BOX_MEMORY_MB of
+    # address space: running out shows up as an error inside the box, not as the machine killing the run.
     return [
+        "prlimit", f"--as={BOX_MEMORY_MB << 20}", "--",
         "bwrap", "--unshare-pid", "--unshare-ipc", "--die-with-parent", "--new-session",
         "--ro-bind", "/usr", "/usr", "--ro-bind", "/etc", "/etc",
         "--symlink", "usr/bin", "/bin", "--symlink", "usr/lib", "/lib", "--symlink", "usr/lib64", "/lib64",

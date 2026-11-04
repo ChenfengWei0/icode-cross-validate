@@ -440,20 +440,21 @@ def align_prompt(state: dict) -> str:  # 算法1 第6行
     )
 
 
+TRIAL_STEPS = 6  # 细则 11.11: trials start small; a harness looping 50 steps exhausted the memory
+
+
 def _verify_note(run: Path, props: list[dict], entities: set[str], config: dict) -> str:
     """细则 11.11: which propositions a verifier can decide, and the headers to write against (stubs)."""
     engine = config.get("verify_engine", "cbmc")
     if shutil.which(engine) is None:
         return f"环境中没有验证器 {engine}，不能使用 verify 检查。"
-    ids = V.write_headers(
-        run / "verify-headers", {p["id"]: p for p in props}, entities, config.get("verify_max_steps", 50), stubs=True
-    )
+    ids = V.write_headers(run / "verify-headers", {p["id"]: p for p in props}, entities, TRIAL_STEPS, stubs=True)
     if not ids:
         return f"环境中有验证器 {engine}，但没有命题适合 verify 检查。"
     return (
         f"环境中有验证器 {engine}。下列命题可以用 verify 检查：{'、'.join(ids)}。"
         f"试验用的头文件在 `{run / 'verify-headers'}`（编译时加 `-I` 这个目录）；它们只有名字，不判定命题，"
-        "检查时程序换成真正的头文件。"
+        f"检查时程序换成真正的头文件。试验头文件的步数默认是 {TRIAL_STEPS}，可以用 `-DCV_Rn_STEPS=k` 改。"
     )
 
 
