@@ -14,6 +14,7 @@
   "verify_engine": "cbmc",
   "verify_timeout": 300,
   "verify_max_steps": 50,
+  "verify_memory_mb": 4096,
   "auto": {"enabled": true, "min_new_messages": 3, "on_session_end": true},
   "snapshot": {"exclude": [], "link": ["node_modules", ".venv"], "copy": [], "max_files": 20000, "max_bytes": 524288000},
   "keep_snapshots": 0,

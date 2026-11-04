@@ -362,7 +362,14 @@ def resolve(source: str, w: Path, align_dir: Path) -> Path | None:
 
 
 def command(
-    engine: str, sources: list[Path], include: Path, unwind: int, out: Path, w: Path, unwindset: dict | None = None
+    engine: str,
+    sources: list[Path],
+    include: Path,
+    unwind: int,
+    out: Path,
+    w: Path,
+    unwindset: dict | None = None,
+    memory_mb: int | None = None,
 ) -> str:
     if engine != "cbmc":
         raise ValueError(f"不支持的验证器 {engine}")
@@ -371,7 +378,8 @@ def command(
         argv += ["--unwindset", ",".join(f"{k}:{v}" for k, v in sorted(unwindset.items()))]
     # The generated headers come first, so a header of the same name in W cannot answer for them.
     argv += ["-I", str(include), "-I", str(w), *map(str, sources)]
-    return " ".join(shlex.quote(a) for a in argv) + f" > {shlex.quote(str(out))} 2>&1"
+    limit = f"ulimit -v {int(memory_mb) * 1024}; " if memory_mb else ""  # 细则 11.8: the verifier's memory
+    return limit + " ".join(shlex.quote(a) for a in argv) + f" > {shlex.quote(str(out))} 2>&1"
 
 
 def _states(trace: list[dict], pid: str, tree: dict) -> list[dict]:
@@ -419,6 +427,8 @@ def _number(data):
 
 def read_result(raw: str, pid: str, tree: dict, nonce: str, entities: set[str]) -> dict:
     """CBMC's JSON output → the result of this check (细则 11.11 执行与判定)."""
+    if "out of memory" in raw.lower() and "VERIFICATION" not in raw:
+        return {"result": M.ALIGN_FAILED, "reason": "验证器内存不足（verify_memory_mb，细则 11.8）"}
     try:
         items = json.loads(raw)
     except (json.JSONDecodeError, ValueError):
@@ -527,7 +537,8 @@ def run(
             include = Path(tmp) / "include"
             write_headers(include, props, entities, check["steps"], nonce)
             out = Path(tmp) / "out.json"
-            cmd = command(engine, sources, include, check["unwind"], out, w, check.get("unwindset"))
+            memory = config.get("verify_memory_mb")
+            cmd = command(engine, sources, include, check["unwind"], out, w, check.get("unwindset"), memory)
             done = run_command(cmd, w, {"CV_ALIGN": str(align_dir), "CV_W": str(w)}, timeout)
             raw = out.read_text(encoding="utf-8", errors="replace") if out.exists() else ""
             cache[key] = (None if done.get("timeout") else raw, nonce)

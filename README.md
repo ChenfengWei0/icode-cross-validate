@@ -523,6 +523,7 @@ snapshots/<run>/          快照，运行结束后默认删除（细则 16.4）
 | --- | --- |
 | 每条检查的超时 | 120 秒，`timeout` 不得超过；verify 检查另有上限 `verify_timeout`，默认 300 秒 |
 | verify 检查的 `steps` 上限 | 50（`verify_max_steps`） |
+| 验证器的内存上限 | 4096 MB（`verify_memory_mb`），超出时这项检查记为失败（对齐） |
 | `runs` 的上限 | 200 |
 | 每条轨迹的状态数上限 | 10000，超出截断并注明 |
 | 整次 `run_checks` 的预算 | 3600 秒 |

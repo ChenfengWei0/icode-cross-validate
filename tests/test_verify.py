@@ -316,3 +316,12 @@ def test_verify_in_the_checker_and_the_report(tmp_path):
     S.write_json(run / "align" / "checks.frozen.json", frozen)
     text = REPORT.render(REPORT.build(run, {}, {"max_discard_ratio": 0.5}))
     assert "反例（cbmc）" in text and "由验证器在给定步数内考察了全部输入的命题 2 条" in text
+
+
+def test_running_out_of_memory_is_named():
+    """细则 11.8 11.11 the verifier runs under verify_memory_mb; running out is an alignment failure with that name."""
+    assert V.command("cbmc", [Path("a.c")], Path("i"), 3, Path("o"), Path("w"), None, 4096).startswith(
+        "ulimit -v 4194304; "
+    )
+    out = V.read_result("SAT checker ran out of memory\nOut of memory", "R1", {"op": "T"}, "", set())
+    assert out["result"] == M.ALIGN_FAILED and "verify_memory_mb" in out["reason"]
