@@ -962,6 +962,7 @@ scripts/live_eval.py           用真实模型跑几轮，再用变异测试衡�
 examples/stack/                评测用的栈需求和固定的变异版本
 examples/snake_logic/          评测用的贪吃蛇逻辑：模糊的需求、预先放好的代码、由独立 agent 写的 bug 列表
 examples/snake_c/              同一需求的 C 版本，用于 verify 检查的评测
+examples/lru/                  封存的考题：LRU 缓存、预先放好的代码、由独立 agent 写的 bug，结果不用于调整
 tests/                         文法、公式、四值判定、检查、需求整理的单元测试，以及端到端测试
 ```
 
@@ -986,6 +987,8 @@ cv uninstall
 
 本地模型写一次命题可能要十几分钟，模型配置要放宽两项，否则答案会被截断，或者请求超时后不断重试、什么也产出不了：`max_output_tokens`（思考和答案共用，实测 32768 够用）和 `http_read_timeout`（默认 300 秒，建议 1800）。`config.json` 的 `agent_timeout` 默认 3600 秒。
 论文贪吃蛇例子的测试见 `examples/snake/README.md`。
+
+`examples/lru` 是封存的考题：bug 由只看过需求和种子代码的独立 agent 写出，它的结果不用来调整提示、规则和检查器，只用来衡量当前的插件。栈和贪吃蛇的成绩都受过针对性调整的影响，不能代表插件在新需求上的表现。
 
 提示中的例子不能取自评测用的需求：提示里写着栈的 `size()`、贪吃蛇的"蛇、食物"时，评测成绩会虚高，换一个需求就不成立。提示的例子用与评测无关的领域（交通信号灯、账户、电梯），`tests/test_prompts.py` 检查提示中没有出现评测需求的用词。
 

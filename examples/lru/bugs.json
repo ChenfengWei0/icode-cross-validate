@@ -1,0 +1,142 @@
+[
+  {
+    "name": "evict_most_recent",
+    "description": "缓存满时 popitem() 弹出的是最近使用的 key 而不是最久没有使用的 key，违反“先移除最久没有使用的 key”。",
+    "old": "self._data.popitem(last=False)",
+    "new": "self._data.popitem()",
+    "demo": "from lru import LRUCache\nc = LRUCache(2)\nc.put(1, 1)\nc.put(2, 2)\nassert c.get(1) == 1\nc.put(3, 3)\nassert c.get(2) == -1\nassert c.get(1) == 1\nassert c.get(3) == 3\n"
+  },
+  {
+    "name": "get_no_recency_update",
+    "description": "get 命中后没有把 key 移到最近使用的位置，违反“get 会让这个 key 成为最近使用的”。",
+    "old": "        self._data.move_to_end(key)\n        return self._data[key]\n",
+    "new": "        return self._data[key]\n",
+    "demo": "from lru import LRUCache\nc = LRUCache(2)\nc.put(1, 1)\nc.put(2, 2)\nassert c.get(1) == 1\nc.put(3, 3)\nassert c.get(2) == -1\nassert c.get(1) == 1\nassert c.get(3) == 3\n"
+  },
+  {
+    "name": "put_update_no_recency",
+    "description": "put 已存在的 key 时只改值、不更新使用顺序（误以为赋值会把 key 移到末尾），违反“put 会让这个 key 成为最近使用的”。",
+    "old": "        if key in self._data:\n            self._data.move_to_end(key)\n        elif len(self._data) >= self.capacity:\n            self._data.popitem(last=False)\n",
+    "new": "        if key not in self._data and len(self._data) >= self.capacity:\n            self._data.popitem(last=False)\n",
+    "demo": "from lru import LRUCache\nc = LRUCache(2)\nc.put(1, 1)\nc.put(2, 2)\nc.put(1, 10)\nc.put(3, 3)\nassert c.get(2) == -1\nassert c.get(1) == 10\nassert c.get(3) == 3\n"
+  },
+  {
+    "name": "update_existing_evicts_when_full",
+    "description": "缓存满时更新已存在的 key 也会移除最久没有使用的 key，违反“只有 put 一个新的 key 时才移除”。",
+    "old": "        elif len(self._data) >= self.capacity:",
+    "new": "        if len(self._data) >= self.capacity:",
+    "demo": "from lru import LRUCache\nc = LRUCache(2)\nc.put(1, 1)\nc.put(2, 2)\nc.put(1, 10)\nassert c.get(2) == 2\nassert c.get(1) == 10\n"
+  },
+  {
+    "name": "update_existing_keeps_old_value",
+    "description": "put 已存在的 key 时只刷新顺序就提前返回，没有写入新值，违反“get 返回 key 对应的值”（应为最后一次 put 的值）。",
+    "old": "            self._data.move_to_end(key)\n        elif",
+    "new": "            self._data.move_to_end(key)\n            return\n        elif",
+    "demo": "from lru import LRUCache\nc = LRUCache(2)\nc.put(1, 1)\nc.put(1, 2)\nassert c.get(1) == 2\n"
+  },
+  {
+    "name": "full_check_off_by_one",
+    "description": "满的判断写成 len > capacity，缓存会多存一个 key 才开始移除，违反“缓存已满（达到 capacity）时 put 新 key 先移除最久没有使用的 key”。",
+    "old": "len(self._data) >= self.capacity",
+    "new": "len(self._data) > self.capacity",
+    "demo": "from lru import LRUCache\nc = LRUCache(2)\nc.put(1, 1)\nc.put(2, 2)\nassert c.get(1) == 1\nc.put(3, 3)\nassert c.get(2) == -1\nassert c.get(1) == 1\nassert c.get(3) == 3\n"
+  },
+  {
+    "name": "missing_returns_none",
+    "description": "key 不在缓存中时 get 返回 None 而不是 -1，违反“key 不在缓存中时返回 -1”。",
+    "old": "            return -1\n",
+    "new": "            return None\n",
+    "demo": "from lru import LRUCache\nc = LRUCache(2)\nassert c.get(5) == -1\nc.put(1, 1)\nassert c.get(2) == -1\n"
+  },
+  {
+    "name": "falsy_value_treated_missing",
+    "description": "get 用值的真假判断 key 是否存在，值为 0（或空串等假值）时返回 -1，违反“get 返回 key 对应的值”。",
+    "old": "    def get(self, key):\n        if key not in self._data:\n            return -1\n        self._data.move_to_end(key)\n        return self._data[key]\n\n",
+    "new": "    def get(self, key):\n        value = self._data.get(key)\n        if not value:\n            return -1\n        self._data.move_to_end(key)\n        return value\n\n",
+    "demo": "from lru import LRUCache\nc = LRUCache(2)\nc.put(1, 0)\nassert c.get(1) == 0\nc.put(2, 2)\nassert c.get(1) == 0\nc.put(3, 3)\nassert c.get(2) == -1\nassert c.get(1) == 0\n"
+  },
+  {
+    "name": "none_value_treated_missing",
+    "description": "get 用 dict.get 返回 None 作为“不存在”的标记，存入的值为 None 时返回 -1，违反“get 返回 key 对应的值”。",
+    "old": "    def get(self, key):\n        if key not in self._data:\n            return -1\n        self._data.move_to_end(key)\n        return self._data[key]\n\n",
+    "new": "    def get(self, key):\n        value = self._data.get(key)\n        if value is None:\n            return -1\n        self._data.move_to_end(key)\n        return value\n\n",
+    "demo": "from lru import LRUCache\nc = LRUCache(2)\nc.put(\"a\", None)\nassert c.get(\"a\") is None\n"
+  },
+  {
+    "name": "minus_one_value_skips_recency",
+    "description": "get 用 -1 作为“不存在”的哨兵，存入的值恰为 -1 时命中却不更新使用顺序，违反“get 会让这个 key 成为最近使用的”。",
+    "old": "    def get(self, key):\n        if key not in self._data:\n            return -1\n        self._data.move_to_end(key)\n        return self._data[key]\n\n",
+    "new": "    def get(self, key):\n        value = self._data.get(key, -1)\n        if value != -1:\n            self._data.move_to_end(key)\n        return value\n\n",
+    "demo": "from lru import LRUCache\nc = LRUCache(2)\nc.put(1, -1)\nc.put(2, 2)\nassert c.get(1) == -1\nc.put(3, 3)\nassert c.get(2) == -1\nassert c.get(3) == 3\n"
+  },
+  {
+    "name": "storage_shared_between_instances",
+    "description": "存储字典放在类属性上，所有 LRUCache 实例共享同一份数据，违反“每个 LRUCache(capacity) 是独立的缓存，未 put 的 key 应返回 -1”。",
+    "old": "    \"\"\"A least-recently-used cache with a fixed capacity.\"\"\"\n\n    def __init__(self, capacity):\n        if capacity < 1:\n            raise ValueError(\"capacity must be at least 1\")\n        self.capacity = capacity\n        self._data = OrderedDict()\n",
+    "new": "    \"\"\"A least-recently-used cache with a fixed capacity.\"\"\"\n\n    _data = OrderedDict()\n\n    def __init__(self, capacity):\n        if capacity < 1:\n            raise ValueError(\"capacity must be at least 1\")\n        self.capacity = capacity\n",
+    "demo": "from lru import LRUCache\na = LRUCache(2)\na.put(1, 1)\nb = LRUCache(2)\nassert b.get(1) == -1\nb.put(2, 2)\nb.put(3, 3)\nassert a.get(1) == 1\n"
+  },
+  {
+    "name": "stores_key_instead_of_value",
+    "description": "put 把 key 本身当作值存入，只有 key 与 value 相等时才看不出来（例如题目中的示例），违反“get 返回 key 对应的值”。",
+    "old": "        self._data[key] = value\n",
+    "new": "        self._data[key] = key\n",
+    "demo": "from lru import LRUCache\nc = LRUCache(2)\nc.put(1, 100)\nassert c.get(1) == 100\n"
+  },
+  {
+    "name": "get_missing_inserts_placeholder",
+    "description": "get 用 pop 再写回的写法，key 不存在时会把 -1 作为值插入缓存并占用容量，导致之后 put 新 key 时提前移除真实的 key，违反“只有缓存已满时才移除”。",
+    "old": "    def get(self, key):\n        if key not in self._data:\n            return -1\n        self._data.move_to_end(key)\n        return self._data[key]\n\n",
+    "new": "    def get(self, key):\n        value = self._data.pop(key, -1)\n        self._data[key] = value\n        return value\n\n",
+    "demo": "from lru import LRUCache\nc = LRUCache(2)\nc.put(1, 1)\nassert c.get(9) == -1\nc.put(2, 2)\nassert c.get(1) == 1\nassert c.get(2) == 2\n"
+  },
+  {
+    "name": "size_counter_counts_updates",
+    "description": "另用计数器记录大小，但更新已存在的 key 也会加一，缓存未满时就开始移除 key，违反“缓存已满时 put 新 key 才移除最久没有使用的 key”。",
+    "old": "        self._data = OrderedDict()\n\n    def get(self, key):\n        if key not in self._data:\n            return -1\n        self._data.move_to_end(key)\n        return self._data[key]\n\n    def put(self, key, value):\n        if key in self._data:\n            self._data.move_to_end(key)\n        elif len(self._data) >= self.capacity:\n            self._data.popitem(last=False)\n        self._data[key] = value\n",
+    "new": "        self._data = OrderedDict()\n        self._size = 0\n\n    def get(self, key):\n        if key not in self._data:\n            return -1\n        self._data.move_to_end(key)\n        return self._data[key]\n\n    def put(self, key, value):\n        if key in self._data:\n            self._data.move_to_end(key)\n        elif self._size >= self.capacity:\n            self._data.popitem(last=False)\n            self._size -= 1\n        self._data[key] = value\n        self._size += 1\n",
+    "demo": "from lru import LRUCache\nc = LRUCache(2)\nc.put(1, 1)\nc.put(1, 2)\nc.put(2, 2)\nassert c.get(1) == 2\nassert c.get(2) == 2\n"
+  },
+  {
+    "name": "linked_list_tail_stale_after_touch",
+    "description": "双向链表实现中，把尾结点（最久没有使用的 key）移到表头时没有更新 tail 指针，之后的移除删掉了刚被使用的 key，违反“get/put 让 key 成为最近使用的”以及“移除最久没有使用的 key”。",
+    "old": "class LRUCache:\n    \"\"\"A least-recently-used cache with a fixed capacity.\"\"\"\n\n    def __init__(self, capacity):\n        if capacity < 1:\n            raise ValueError(\"capacity must be at least 1\")\n        self.capacity = capacity\n        self._data = OrderedDict()\n\n    def get(self, key):\n        if key not in self._data:\n            return -1\n        self._data.move_to_end(key)\n        return self._data[key]\n\n    def put(self, key, value):\n        if key in self._data:\n            self._data.move_to_end(key)\n        elif len(self._data) >= self.capacity:\n            self._data.popitem(last=False)\n        self._data[key] = value\n",
+    "new": "class _Node:\n    __slots__ = (\"key\", \"value\", \"prev\", \"next\")\n\n    def __init__(self, key, value):\n        self.key = key\n        self.value = value\n        self.prev = None\n        self.next = None\n\n\nclass LRUCache:\n    \"\"\"A least-recently-used cache with a fixed capacity.\"\"\"\n\n    def __init__(self, capacity):\n        if capacity < 1:\n            raise ValueError(\"capacity must be at least 1\")\n        self.capacity = capacity\n        self._map = {}\n        self._head = None  # most recently used\n        self._tail = None  # least recently used\n\n    def _push_front(self, node):\n        node.prev = None\n        node.next = self._head\n        if self._head is not None:\n            self._head.prev = node\n        self._head = node\n        if self._tail is None:\n            self._tail = node\n\n    def _move_to_front(self, node):\n        if node is self._head:\n            return\n        node.prev.next = node.next\n        if node.next is not None:\n            node.next.prev = node.prev\n        node.prev = None\n        node.next = self._head\n        self._head.prev = node\n        self._head = node\n\n    def _pop_tail(self):\n        node = self._tail\n        self._tail = node.prev\n        if self._tail is not None:\n            self._tail.next = None\n        else:\n            self._head = None\n        node.prev = None\n        return node\n\n    def get(self, key):\n        node = self._map.get(key)\n        if node is None:\n            return -1\n        self._move_to_front(node)\n        return node.value\n\n    def put(self, key, value):\n        node = self._map.get(key)\n        if node is not None:\n            node.value = value\n            self._move_to_front(node)\n            return\n        if len(self._map) >= self.capacity:\n            lru = self._pop_tail()\n            del self._map[lru.key]\n        node = _Node(key, value)\n        self._map[key] = node\n        self._push_front(node)\n",
+    "demo": "from lru import LRUCache\nc = LRUCache(2)\nc.put(1, 1)\nc.put(2, 2)\nassert c.get(1) == 1\nc.put(3, 3)\nassert c.get(2) == -1\nassert c.get(1) == 1\nassert c.get(3) == 3\n"
+  },
+  {
+    "name": "linked_list_capacity_one_crash",
+    "description": "双向链表实现弹出尾结点时假设尾结点一定有前驱，容量为 1 时缓存已满再 put 新 key 会抛出 AttributeError，违反“capacity 至少为 1”下缓存满时应移除旧 key 并存入新 key。",
+    "old": "class LRUCache:\n    \"\"\"A least-recently-used cache with a fixed capacity.\"\"\"\n\n    def __init__(self, capacity):\n        if capacity < 1:\n            raise ValueError(\"capacity must be at least 1\")\n        self.capacity = capacity\n        self._data = OrderedDict()\n\n    def get(self, key):\n        if key not in self._data:\n            return -1\n        self._data.move_to_end(key)\n        return self._data[key]\n\n    def put(self, key, value):\n        if key in self._data:\n            self._data.move_to_end(key)\n        elif len(self._data) >= self.capacity:\n            self._data.popitem(last=False)\n        self._data[key] = value\n",
+    "new": "class _Node:\n    __slots__ = (\"key\", \"value\", \"prev\", \"next\")\n\n    def __init__(self, key, value):\n        self.key = key\n        self.value = value\n        self.prev = None\n        self.next = None\n\n\nclass LRUCache:\n    \"\"\"A least-recently-used cache with a fixed capacity.\"\"\"\n\n    def __init__(self, capacity):\n        if capacity < 1:\n            raise ValueError(\"capacity must be at least 1\")\n        self.capacity = capacity\n        self._map = {}\n        self._head = None  # most recently used\n        self._tail = None  # least recently used\n\n    def _push_front(self, node):\n        node.prev = None\n        node.next = self._head\n        if self._head is not None:\n            self._head.prev = node\n        self._head = node\n        if self._tail is None:\n            self._tail = node\n\n    def _move_to_front(self, node):\n        if node is self._head:\n            return\n        node.prev.next = node.next\n        if node.next is not None:\n            node.next.prev = node.prev\n        else:\n            self._tail = node.prev\n        node.prev = None\n        node.next = self._head\n        self._head.prev = node\n        self._head = node\n\n    def _pop_tail(self):\n        node = self._tail\n        self._tail = node.prev\n        self._tail.next = None\n        node.prev = None\n        return node\n\n    def get(self, key):\n        node = self._map.get(key)\n        if node is None:\n            return -1\n        self._move_to_front(node)\n        return node.value\n\n    def put(self, key, value):\n        node = self._map.get(key)\n        if node is not None:\n            node.value = value\n            self._move_to_front(node)\n            return\n        if len(self._map) >= self.capacity:\n            lru = self._pop_tail()\n            del self._map[lru.key]\n        node = _Node(key, value)\n        self._map[key] = node\n        self._push_front(node)\n",
+    "demo": "from lru import LRUCache\nc = LRUCache(1)\nc.put(1, 1)\nassert c.get(1) == 1\nc.put(2, 2)\nassert c.get(1) == -1\nassert c.get(2) == 2\n"
+  },
+  {
+    "name": "order_list_duplicate_on_update",
+    "description": "用列表记录使用顺序时，put 已存在的 key 没有先从列表中删除旧位置，列表里出现重复，之后会移除刚被更新的 key 而不是最久没有使用的 key，违反“put 让 key 成为最近使用的”。",
+    "old": "        self._data = OrderedDict()\n\n    def get(self, key):\n        if key not in self._data:\n            return -1\n        self._data.move_to_end(key)\n        return self._data[key]\n\n    def put(self, key, value):\n        if key in self._data:\n            self._data.move_to_end(key)\n        elif len(self._data) >= self.capacity:\n            self._data.popitem(last=False)\n        self._data[key] = value\n",
+    "new": "        self._data = {}\n        self._order = []\n\n    def get(self, key):\n        if key not in self._data:\n            return -1\n        self._order.remove(key)\n        self._order.append(key)\n        return self._data[key]\n\n    def put(self, key, value):\n        if key not in self._data and len(self._data) >= self.capacity:\n            oldest = self._order.pop(0)\n            del self._data[oldest]\n        self._data[key] = value\n        self._order.append(key)\n",
+    "demo": "from lru import LRUCache\nc = LRUCache(2)\nc.put(1, 1)\nc.put(2, 2)\nc.put(1, 10)\nc.put(3, 3)\nassert c.get(1) == 10\nassert c.get(2) == -1\nassert c.get(3) == 3\n"
+  },
+  {
+    "name": "evicted_key_left_in_storage",
+    "description": "移除时只从顺序列表中删掉最久没有使用的 key，忘了从存储字典中删除，被移除的 key 仍被视为在缓存中（get 不返回 -1，甚至出错），违反“先移除最久没有使用的 key”。",
+    "old": "        self._data = OrderedDict()\n\n    def get(self, key):\n        if key not in self._data:\n            return -1\n        self._data.move_to_end(key)\n        return self._data[key]\n\n    def put(self, key, value):\n        if key in self._data:\n            self._data.move_to_end(key)\n        elif len(self._data) >= self.capacity:\n            self._data.popitem(last=False)\n        self._data[key] = value\n",
+    "new": "        self._data = {}\n        self._order = []\n\n    def get(self, key):\n        if key not in self._data:\n            return -1\n        self._order.remove(key)\n        self._order.append(key)\n        return self._data[key]\n\n    def put(self, key, value):\n        if key in self._data:\n            self._order.remove(key)\n        elif len(self._order) >= self.capacity:\n            self._order.pop(0)\n        self._data[key] = value\n        self._order.append(key)\n",
+    "demo": "from lru import LRUCache\nc = LRUCache(2)\nc.put(1, 1)\nc.put(2, 2)\nassert c.get(1) == 1\nc.put(3, 3)\nassert c.get(2) == -1\nassert c.get(1) == 1\nassert c.get(3) == 3\n"
+  },
+  {
+    "name": "recency_tracked_only_when_full",
+    "description": "get 只在缓存已满时才更新使用顺序（误以为未满时顺序无关紧要），未满时被 get 的 key 在之后填满并移除时仍被当成最久没有使用的，违反“get 会让这个 key 成为最近使用的”。",
+    "old": "        self._data.move_to_end(key)\n        return self._data[key]\n",
+    "new": "        if len(self._data) == self.capacity:\n            self._data.move_to_end(key)\n        return self._data[key]\n",
+    "demo": "from lru import LRUCache\nc = LRUCache(3)\nc.put(1, 1)\nc.put(2, 2)\nassert c.get(1) == 1\nc.put(3, 3)\nc.put(4, 4)\nassert c.get(2) == -1\nassert c.get(1) == 1\nassert c.get(3) == 3\nassert c.get(4) == 4\n"
+  },
+  {
+    "name": "usage_clock_wraps_around",
+    "description": "用逻辑时钟记录最近使用时间，但时钟对 1000 取模回绕，操作次数多了之后最新使用的 key 时间戳反而最小而被移除，违反“先移除最久没有使用的 key”。",
+    "old": "        self._data = OrderedDict()\n\n    def get(self, key):\n        if key not in self._data:\n            return -1\n        self._data.move_to_end(key)\n        return self._data[key]\n\n    def put(self, key, value):\n        if key in self._data:\n            self._data.move_to_end(key)\n        elif len(self._data) >= self.capacity:\n            self._data.popitem(last=False)\n        self._data[key] = value\n",
+    "new": "        self._data = {}\n        self._last_used = {}\n        self._clock = 0\n\n    def _touch(self, key):\n        self._clock = (self._clock + 1) % 1000\n        self._last_used[key] = self._clock\n\n    def get(self, key):\n        if key not in self._data:\n            return -1\n        self._touch(key)\n        return self._data[key]\n\n    def put(self, key, value):\n        if key not in self._data and len(self._data) >= self.capacity:\n            oldest = min(self._last_used, key=self._last_used.get)\n            del self._data[oldest]\n            del self._last_used[oldest]\n        self._data[key] = value\n        self._touch(key)\n",
+    "demo": "from lru import LRUCache\nc = LRUCache(2)\nc.put(0, 0)\nc.put(1, 1)\nfor i in range(2, 3000):\n    c.put(i, i)\n    assert c.get(i - 2) == -1\nassert c.get(2998) == 2998\nassert c.get(2999) == 2999\n"
+  }
+]

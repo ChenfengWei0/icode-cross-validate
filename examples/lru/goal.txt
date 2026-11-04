@@ -1,0 +1,1 @@
+用 Python 实现一个 LRU 缓存，写在 lru.py 中，不需要界面。类 LRUCache(capacity) 提供 get(key) 和 put(key, value)。get 返回 key 对应的值，key 不在缓存中时返回 -1。get 和 put 都会让这个 key 成为最近使用的。缓存已满时 put 一个新的 key，先移除最久没有使用的 key。capacity 至少为 1。例如：容量为 2 时依次 put(1, 1)、put(2, 2)、get(1) 得到 1，再 put(3, 3) 之后，get(2) 得到 -1。

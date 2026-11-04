@@ -136,3 +136,32 @@ def test_what_is_only_for_a_person_catches_nothing():
     report = {"conclusion": "比对通过", "conclusion_reason": "x", "stats": {}, "to_confirm": ["R1 …"]}
     one = EV.summarize_round(report, {"correct": marked})
     assert one["control_clean"] is True and one["to_confirm"] == 1
+
+
+def run_demo(source: str, demo: str) -> bool:
+    """Whether the bug's demo holds for this lru.py."""
+    module = type(sys)("lru")
+    exec(compile(source, "lru.py", "exec"), module.__dict__)  # noqa: S102 — fixed sources of this repository
+    saved = sys.modules.get("lru")
+    sys.modules["lru"] = module
+    try:
+        exec(compile(demo, "demo", "exec"), {})  # noqa: S102
+    except Exception:  # any failure means the demo does not hold
+        return False
+    finally:
+        if saved is None:
+            sys.modules.pop("lru", None)
+        else:
+            sys.modules["lru"] = saved
+    return True
+
+
+def test_sealed_lru_bugs_are_real_bugs():
+    """Every sealed bug applies once, and its demo of the requirement holds on the seed and fails on the bug."""
+    lru = EV.load_mutants(ROOT / "examples" / "lru")
+    assert lru.MODE == "积累" and len(lru.BUGS) == 20 and len({b["name"] for b in lru.BUGS}) == 20
+    made = lru.prepare(lru.SEED)
+    for bug in lru.BUGS:
+        assert lru.SEED.count(bug["old"]) == 1, bug["name"]
+        assert run_demo(lru.SEED, bug["demo"]), bug["name"]
+        assert not run_demo(made[bug["name"]], bug["demo"]), bug["name"]

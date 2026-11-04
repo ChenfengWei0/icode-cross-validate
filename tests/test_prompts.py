@@ -83,6 +83,12 @@ def test_placeholders_filled():
         assert placeholders <= {"MESSAGES", "REQUIREMENT", "SENTENCES"}, name
 
 
+def _mentions(text: str, word: str) -> bool:
+    if word.isascii():
+        return re.search(rf"(?<![a-z0-9_]){re.escape(word.lower())}(?![a-z0-9_])", text) is not None
+    return word in text
+
+
 def test_prompts_do_not_borrow_from_the_evaluations():
     """The examples in the prompts come from no evaluated requirement, or the scores measure the prompt."""
     words = {"蛇", "食物", "撞", "格子", "栈", "压入", "弹出", "snake", "stack"}
@@ -91,5 +97,6 @@ def test_prompts_do_not_borrow_from_the_evaluations():
     words -= {"Python"}
     for path in PROMPTS.glob("*.md"):
         text = path.read_text(encoding="utf-8").lower()
-        found = sorted(w for w in words if w.lower() in text)
+        # ASCII words as whole words (put is not in unstated_inputs); Chinese ones anywhere.
+        found = sorted(w for w in words if _mentions(text, w))
         assert not found, f"{path.name}: {found}"
