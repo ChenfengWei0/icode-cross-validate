@@ -983,5 +983,5 @@ def test_prompts_ask_for_reachable_states_and_meaning_not_names():
 def test_prompt_shows_where_an_event_goes():
     """细则 12.2 a script wrote each event on the line after its step, and correct code failed 8 propositions."""
     align = (Path(FLOW.__file__).parent / "prompts" / "align.md").read_text(encoding="utf-8")
-    for phrase in ("事件写在发生之前的那一行", "深度还是压入前的 2", "交答案前运行一次脚本"):
+    for phrase in ("事件写在发生之前的那一行", "载客数还是接到前的 2", "交答案前运行一次脚本"):
         assert phrase in align
