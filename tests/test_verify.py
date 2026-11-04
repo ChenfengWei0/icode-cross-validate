@@ -4,6 +4,7 @@ import json
 import random
 import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -254,8 +255,15 @@ def test_verify_checks_in_checks_json(tmp_path):
         {**good, "steps": 51},
         {**good, "unwind": 0},
         {**good, "timeout": 301},
+        {**good, "unwindset": {"game_step": 3}},  # not a loop number
+        {**good, "unwindset": {"game_step.0": 0}},
     ]
-    out = A.validate({"checks": [good, *bad, {**good, "proposition": "R7"}]}, _props(), limits, {"蛇", "食物", "游戏"})
+    tight = {**good, "proposition": "R7", "unwindset": {"game_step.0": 9, "main.0": 7}}
+    out = A.validate({"checks": [good, *bad, tight]}, _props(), limits, {"蛇", "食物", "游戏"})
+    assert out["checks"][1]["unwindset"] == {"game_step.0": 9, "main.0": 7}
+    assert "--unwindset game_step.0:9,main.0:7" in V.command(
+        "cbmc", [], Path("i"), 3, Path("o"), Path("w"), out["checks"][1]["unwindset"]
+    )
     assert len(out["format_errors"]) == len(bad)
     assert "R4" not in out["align_failures"] and "R7" not in out["align_failures"]
     assert [c["kind"] for c in out["checks"]] == ["verify", "verify"]

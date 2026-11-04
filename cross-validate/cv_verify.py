@@ -361,10 +361,14 @@ def resolve(source: str, w: Path, align_dir: Path) -> Path | None:
     return path if path.is_file() else None
 
 
-def command(engine: str, sources: list[Path], include: Path, unwind: int, out: Path, w: Path) -> str:
+def command(
+    engine: str, sources: list[Path], include: Path, unwind: int, out: Path, w: Path, unwindset: dict | None = None
+) -> str:
     if engine != "cbmc":
         raise ValueError(f"不支持的验证器 {engine}")
     argv = ["cbmc", "--json-ui", "--trace", "--unwind", str(unwind), "--unwinding-assertions"]
+    if unwindset:  # 细则 11.11: tighter bounds for single loops; every loop still gets an unwinding assertion
+        argv += ["--unwindset", ",".join(f"{k}:{v}" for k, v in sorted(unwindset.items()))]
     # The generated headers come first, so a header of the same name in W cannot answer for them.
     argv += ["-I", str(include), "-I", str(w), *map(str, sources)]
     return " ".join(shlex.quote(a) for a in argv) + f" > {shlex.quote(str(out))} 2>&1"
@@ -515,7 +519,7 @@ def run(
     sources = [resolve(s, w, align_dir) for s in check["sources"]]
     if any(s is None for s in sources):
         return {"result": M.ALIGN_FAILED, "reason": "sources 中有不存在的文件"}
-    key = json.dumps([check["sources"], check["steps"], check["unwind"]])
+    key = json.dumps([check["sources"], check["steps"], check["unwind"], check.get("unwindset") or {}], sort_keys=True)
     cache = {} if cache is None else cache
     if key not in cache:
         nonce = secrets.token_hex(8)
@@ -523,7 +527,7 @@ def run(
             include = Path(tmp) / "include"
             write_headers(include, props, entities, check["steps"], nonce)
             out = Path(tmp) / "out.json"
-            cmd = command(engine, sources, include, check["unwind"], out, w)
+            cmd = command(engine, sources, include, check["unwind"], out, w, check.get("unwindset"))
             done = run_command(cmd, w, {"CV_ALIGN": str(align_dir), "CV_W": str(w)}, timeout)
             raw = out.read_text(encoding="utf-8", errors="replace") if out.exists() else ""
             cache[key] = (None if done.get("timeout") else raw, nonce)

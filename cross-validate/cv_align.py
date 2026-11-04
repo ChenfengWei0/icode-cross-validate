@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import cv_state as S
 import cv_verify as V
 
 KINDS = ("command", "trace", "verify")
-PROGRAM_JUDGED = ("trace", "verify")  # 细则 11.5: the program judges the generated formula
+PROGRAM_JUDGED = ("trace", "verify")
+LOOP_ID = re.compile(
+    r"[A-Za-z_$][\w$@]*\.\d+"
+)  # a verifier's loop number, e.g. game_step.0  # 细则 11.5: the program judges the generated formula
 
 
 def load(align_dir: Path) -> tuple[dict | None, str | None]:
@@ -145,6 +149,11 @@ def _verify_check(item: dict, prop: dict, limits: dict, entities) -> tuple[dict,
         return {}, f"steps 应是 1 到 {max_steps} 的整数"
     if not _int(item.get("unwind"), 1):
         return {}, "unwind 应是正整数"
+    unwindset = item.get("unwindset", {})
+    if not isinstance(unwindset, dict) or not all(
+        isinstance(k, str) and LOOP_ID.fullmatch(k) and _int(v, 1) for k, v in unwindset.items()
+    ):
+        return {}, "unwindset 应是从循环编号（例如 game_step.0）到正整数的对象"
     cap = limits.get("verify_timeout", 300)
     timeout = item.get("timeout", cap)
     if not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or not 0 < timeout <= cap:
@@ -161,6 +170,7 @@ def _verify_check(item: dict, prop: dict, limits: dict, entities) -> tuple[dict,
         "sources": sources,
         "steps": item["steps"],
         "unwind": item["unwind"],
+        "unwindset": unwindset,
         "runs": 1,
         "timeout": timeout,
         "unstated_inputs": unstated,
