@@ -57,6 +57,8 @@ def _named(fn, name: str):
 
 def intake(value: WorkflowValue) -> WorkflowValue:
     state = FLOW.intake(value.text, os.getcwd(), HERE)
+    # 细则 5.3: the run read its hooks just before this node; check them before any agent runs.
+    state = FLOW.guarded("check_guard", lambda s: FLOW.check_guard(s, CONFIG), state)
     return WorkflowValue(text=value.text if state["mode"] == FLOW.MODE_GOAL else "", data=state)
 
 

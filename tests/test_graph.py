@@ -132,6 +132,20 @@ def test_tool_call_in_rewrite_reruns(home, tmp_path, monkeypatch):
     assert "切句兜底" not in report, "the rerun answer of the rewrite was used"
 
 
+def test_inactive_guard_stops_before_subtask(home, tmp_path, monkeypatch):
+    """细则 5.3 without an active guard the main agent still works, but no subtask agent runs and it is 无效."""
+    import conftest
+
+    w = tmp_path / "w"
+    shutil.copytree(SNAKE / "buggy", w, ignore=shutil.ignore_patterns("__pycache__"))
+    monkeypatch.chdir(w)
+    conftest.fake_hook_list(tmp_path, monkeypatch, {"version": 1, "files": []})
+    calls = []
+    report = load(home).workflow.run("实现贪吃蛇。", snake_agents(calls))[0].text
+    assert [c[0] for c in calls] == ["implement"]
+    assert "**无效**" in report and "cv-subtask-guard" in report
+
+
 def test_accumulation_mode(home, tmp_path, monkeypatch):
     """细则 4.1 4.3 15.4 accumulation mode consolidates the ledger first, then runs the same stages."""
     sys.path.insert(0, str(ROOT / "cross-validate"))

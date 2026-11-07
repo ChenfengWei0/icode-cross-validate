@@ -173,7 +173,8 @@ snapshots/<run>/          快照，运行结束后默认删除（细则 16.4）
   - 每个节点最多重跑一次；
   - 报告注明哪个节点的回答因调用了什么工具被作废重跑。
 - iCode 对 agent 节点的自动重试（默认 3 次）都在这个窗口内：任何一次尝试中的调用都使这个节点的回答作废。
-- 这样做的依据：保证约束 3 的是 hook 在工具执行之前拒绝调用，agent 只收到固定的拒绝理由，拿不到任何文件或命令输出，也没有副作用。作废和新会话保证被拒绝的尝试不影响答案。hook 没有安装或被关掉时既不拦截也不记录，这一条不能察觉，与原来相同。
+- 这样做的依据：保证约束 3 的是 hook 在工具执行之前拒绝调用，agent 只收到固定的拒绝理由，拿不到任何文件或命令输出，也没有副作用。作废和新会话保证被拒绝的尝试不影响答案。hook 没有安装或被关掉时既不拦截也不记录，所以先要确认它生效（下一条）。
+- **确认守卫生效。** 工作流运行开始时 iCode 读一次 hooks 文件，之后不再重读。所以工作流的第一个节点 `intake`（两种模式都是，在任何 agent 之前）在 W 中运行 `icode hook list --json`，确认 iCode 在这里加载 `cv-subtask-guard`：至少有一条 id 为它的条目同时满足——所在文件的 `state` 为 `loaded`；`enabled` 为真；`event` 为 `before_tool_call`；`execution.mode` 为 `blocking`，`execution.on_error` 为 `block`；`match.profile` 为 `cv-subtask`，`match.profiles` 为 `[]`，`match.args` 为 `{}`，`match.tool_kind`、`match.tool_name` 为 `null`；`run.type` 为 `command`，`run.program` 不为空（否则调用仍被拦下，但记录会丢）。没有任何 hooks 文件时输出的 `files` 为空，按没有配置处理。iCode 命令取环境变量 `CV_ICODE`，否则 `config.json` 的 `icode`（在 PATH 中找），找不到时取 iCode 自身 Python 旁的 `icode`。命令失败、超时、输出无法解析，或没有满足条件的条目，这次运行无效，不再调用子任务 agent；目标模式下主 agent 照常完成目标。运行开始到 `intake` 之间没有 agent 运行，这段时间里有人改动 hooks 文件，检查看到的就不是运行加载的那份；这一点不再另做处理。
 - 每个子任务节点之后的检查节点、以及报告节点，确认记录条数不超过已抵消的条数；超过时（重跑又调用了工具，或者记录出现在任何 `_tools` 节点之外），这次运行无效。条数只增不减；其他运行的记录、写到一半的行、在 `_tools` 之后才写入的记录，只会多算，不会少算（宁可误判为无效）。
 - `_tools`、`_rerun` 只用于子任务 agent；对齐阶段不设。
 

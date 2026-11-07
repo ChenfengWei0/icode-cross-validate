@@ -57,7 +57,35 @@ def home(tmp_path, monkeypatch):
         S.ensure_private(S.cv_home()) / "install.json",
         {"workflow_digest": S.folder_digest(h / "workflows" / "cross-validate")},
     )
+    fake_hook_list(tmp_path, monkeypatch, GUARD_LISTING)
     return h
+
+
+GUARD = {
+    "id": "cv-subtask-guard",
+    "event": "before_tool_call",
+    "enabled": True,
+    "execution": {"mode": "blocking", "detach": False, "timeout_seconds": 10.0, "on_error": "block"},
+    "match": {"profile": "cv-subtask", "profiles": [], "tool_kind": None, "tool_name": None, "args": {}},
+    "run": {"type": "command", "path": None, "program": "/usr/bin/python3"},
+}
+GUARD_LISTING = {
+    "version": 1,
+    "files": [{"scope": "global", "path": "hooks.yaml", "state": "loaded", "hooks": [GUARD]}],
+}
+
+
+def fake_hook_list(tmp_path, monkeypatch, listing, returncode=0):
+    """细则 5.3 an icode whose `hook list --json` prints `listing` (what an installed plugin shows by default)."""
+    out = tmp_path / "hook-list.json"
+    out.write_text(listing if isinstance(listing, str) else json.dumps(listing), encoding="utf-8")
+    exe = tmp_path / "icode-hooks"
+    exe.write_text(
+        f"#!{sys.executable}\nimport sys\nprint(open({str(out)!r}, encoding='utf-8').read())\nsys.exit({returncode})\n",
+        encoding="utf-8",
+    )
+    exe.chmod(0o755)
+    monkeypatch.setenv("CV_ICODE", str(exe))
 
 
 @pytest.fixture

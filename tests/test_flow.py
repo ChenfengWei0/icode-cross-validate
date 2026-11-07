@@ -127,6 +127,51 @@ def test_tool_gate_excuses_one_window(home, tmp_path):
     assert state["invalid"] and "sleep" in state["invalid"][0] and "load_skill" not in state["invalid"][0]
 
 
+@pytest.mark.parametrize(
+    "change, reason",
+    [
+        (None, "没有配置 hook"),
+        ({"enabled": False}, "被停用"),
+        ({"execution": {"mode": "async", "on_error": "block"}}, "执行方式"),
+        ({"execution": {"mode": "blocking", "on_error": "warn"}}, "出错时 warn"),
+        ({"match": {"profile": "cv-subtask", "tool_name": "read_file"}}, "匹配条件"),
+        ({"match": {"profile": "Code"}}, "匹配条件"),
+        ({"run": {"type": "script", "program": None}}, "运行方式"),
+        ("second", None),
+        ("not loaded", "没有加载"),
+        ("garbage", "无法解析"),
+        ("exit", "失败"),
+    ],
+)
+def test_guard_must_be_active(home, tmp_path, monkeypatch, change, reason):
+    """细则 5.3 the run is invalid unless iCode loads the blocking guard of the subtask agent here."""
+    import conftest
+
+    state, _ = goal_run(home, tmp_path)
+    assert FLOW.guard_problem(state["w"], fast_config()) is None
+    listing = json.loads(json.dumps(conftest.GUARD_LISTING))
+    code = 0
+    if change is None:
+        listing["files"][0]["hooks"] = []
+    elif change == "not loaded":
+        listing["files"][0]["state"] = "not_loaded"
+    elif change == "garbage":
+        listing = "不是 JSON"
+    elif change == "exit":
+        code = 1
+    elif change == "second":  # 细则 5.3 one conforming entry suffices when the id appears twice
+        bad = {**listing["files"][0]["hooks"][0], "enabled": False}
+        listing["files"].insert(0, {"scope": "project", "path": "p.yaml", "state": "loaded", "hooks": [bad]})
+    else:
+        listing["files"][0]["hooks"][0].update(change)
+    conftest.fake_hook_list(tmp_path, monkeypatch, listing, code)
+    FLOW.check_guard(state, fast_config())
+    if reason is None:
+        assert not state.get("invalid")
+        return
+    assert state["invalid"] and reason in state["invalid"][0] and "细则 5.3" in state["invalid"][0]
+
+
 def test_goal_mode_violation_log(home, tmp_path):
     """细则 5.3 without CV_RUN_DIR the hook's global log counts for runs in the same directory."""
     state, w = goal_run(home, tmp_path)

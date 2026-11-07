@@ -12,6 +12,7 @@ import os
 import shutil
 import stat
 import subprocess
+import sys
 from pathlib import Path
 
 import cv_align as A
@@ -169,6 +170,71 @@ def violations(state: dict) -> list[dict]:
         if not isinstance(cwd, str) or os.path.realpath(cwd) == state["w"]:
             found.append(line)
     return found
+
+
+GUARD_ID = "cv-subtask-guard"
+
+
+def _icode(config: dict) -> str:
+    """细则 5.3: CV_ICODE, else config's icode on PATH, else the icode beside iCode's own Python."""
+    named = os.environ.get("CV_ICODE") or config.get("icode") or "icode"
+    found = shutil.which(named)
+    if found:
+        return found
+    beside = Path(sys.executable).parent / "icode"
+    return str(beside) if beside.exists() else named
+
+
+def guard_problem(cwd: str, config: dict) -> str | None:
+    """细则 5.3: why iCode would not load the blocking guard of the subtask agent in cwd, or None."""
+    try:
+        out = subprocess.run(
+            [_icode(config), "hook", "list", "--json"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return f"无法运行 icode hook list：{e}"
+    if out.returncode != 0:
+        return f"icode hook list 失败：{(out.stderr or out.stdout).strip()[-300:]}"
+    try:
+        files = json.loads(out.stdout)["files"]
+        found = [(f, h) for f in files for h in f.get("hooks") or [] if h.get("id") == GUARD_ID]
+    except (json.JSONDecodeError, KeyError, TypeError, AttributeError):
+        return "icode hook list --json 的输出无法解析"
+    if not found:
+        return f"iCode 没有配置 hook {GUARD_ID}（请运行 cv install）"
+    problems = []
+    for f, h in found:
+        execution, match, run = h.get("execution") or {}, h.get("match") or {}, h.get("run") or {}
+        if f.get("state") != "loaded":
+            problems.append(f"所在文件 {f.get('path')} 没有加载（{f.get('state')}）")
+        elif h.get("enabled") is not True:
+            problems.append("被停用")
+        elif h.get("event") != "before_tool_call":
+            problems.append(f"事件是 {h.get('event')}")
+        elif execution.get("mode") != "blocking" or execution.get("on_error") != "block":
+            problems.append(f"执行方式是 {execution.get('mode')}、出错时 {execution.get('on_error')}")
+        elif match.get("profile") != "cv-subtask" or any(
+            match.get(k) for k in ("profiles", "tool_kind", "tool_name", "args")
+        ):
+            problems.append("匹配条件不是只限定 cv-subtask")
+        elif run.get("type") != "command" or not run.get("program"):
+            problems.append("运行方式不是命令，调用不会被记录")
+        else:
+            return None
+    return f"hook {GUARD_ID} 不会拦截子任务 agent 的工具调用：{'；'.join(problems)}（请运行 cv install）"
+
+
+def check_guard(state: dict, config: dict) -> dict:
+    """细则 5.3: at intake, before any agent, the guard must be loaded and blocking, else the run is invalid."""
+    problem = guard_problem(state["w"], config)
+    if problem:
+        _invalid(state, f"{problem}（细则 5.3）")
+    return state
 
 
 def _lines(path: Path) -> list[dict]:
