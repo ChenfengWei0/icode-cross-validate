@@ -136,6 +136,19 @@ def test_guard_hook(home, tmp_path, monkeypatch):
     assert json.loads((run / "tool-violations.jsonl").read_text())["tool"] == "read_file"
 
 
+def test_guard_without_result_file_blocks(home, tmp_path, monkeypatch):
+    """细则 5.3 without CHRYS_HOOK_RESULT the guard exits non-zero, which on_error: block refuses."""
+    run = tmp_path / "run"
+    run.mkdir()
+    pf = tmp_path / "payload.json"
+    pf.write_text(json.dumps({"profile": "cv-subtask", "tool": {"name": "load_skill"}}), encoding="utf-8")
+    monkeypatch.setenv("CHRYS_HOOK_PAYLOAD_FILE", str(pf))
+    monkeypatch.delenv("CHRYS_HOOK_RESULT", raising=False)
+    monkeypatch.setenv("CV_RUN_DIR", str(run))
+    assert CLI.hook("guard") != 0
+    assert json.loads((run / "tool-violations.jsonl").read_text())["tool"] == "load_skill"
+
+
 def test_history_guard(home, tmp_path, monkeypatch):
     """细则 5.6 agents do not read other runs; the cv command, W and the running align/ stay usable."""
     monkeypatch.setenv("HOME", str(tmp_path))

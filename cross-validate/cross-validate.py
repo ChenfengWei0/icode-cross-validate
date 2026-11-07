@@ -91,8 +91,63 @@ def after_implement(value: WorkflowValue) -> WorkflowValue:
 # ---------------------------------------------------------------------------------------------------
 
 
-def stage(name: str, profile: str, model, make_prompt, check):
-    """prompt ▶ agent ▶ check ─revise?─▶ redo ▶ final. Returns (entry, exit) handles."""
+def agent_step(src, src_name: str, runs, name: str, profile: str, model, timeout, gated: bool):
+    """src ─runs?─▶ agent ▶ (subtask only) tools ─rerun?─▶ rerun (细则 5.3).
+
+    Returns (exits, answer_of): the handles to join on, and a function giving (state, answer) from that
+    join. The answer comes from the agent or, after a voided answer, from its rerun; the voided answer
+    never leaves the tools node.
+    """
+    n_agent = wf.agent(name, profile=profile, model=model, timeout=timeout)
+    wf.edge(src, n_agent, when=_named(runs, f"{name}_runs"))
+    if not gated:
+
+        def answer_plain(sources: list[SourceValue]) -> tuple[dict, str | None]:
+            by = _by_node(sources)
+            return _state(by[src_name]), (by[name].text if name in by else None)
+
+        return [n_agent], answer_plain
+
+    def join_tools(sources: list[SourceValue]) -> WorkflowValue:
+        by = _by_node(sources)
+        upstream = by[src_name]
+        answer = by[name].text if name in by else None
+        data = {"state": _state(upstream), "answer": answer, "task": upstream.text, "ran": runs(upstream)}
+        return WorkflowValue(text="", data=data)
+
+    def tools_node(value: WorkflowValue) -> WorkflowValue:
+        state, answer = value.data["state"], value.data["answer"]
+        rerun = None
+        if value.data["ran"]:
+            rerun = FLOW.guarded(f"{name}_tools", lambda s: FLOW.tool_gate(s, name, value.data["task"]), state)
+            if isinstance(rerun, dict):  # the gate itself failed; guarded() recorded why and returned the state
+                state, rerun = rerun, None
+        if rerun is None:
+            return WorkflowValue(text="", data={"state": state, "answer": answer, "rerun": False})
+        return WorkflowValue(text=rerun, data={"state": state, "answer": None, "rerun": True})
+
+    def needs_rerun(value: WorkflowValue) -> bool:
+        return bool(isinstance(value.data, dict) and value.data.get("rerun"))
+
+    def answer_gated(sources: list[SourceValue]) -> tuple[dict, str | None]:
+        by = _by_node(sources)
+        gate = by[f"{name}_tools"].data
+        if gate["rerun"]:
+            return dict(gate["state"]), (by[f"{name}_rerun"].text if f"{name}_rerun" in by else None)
+        return dict(gate["state"]), gate["answer"]
+
+    n_tools = wf.python(f"{name}_tools", _named(tools_node, f"{name}_tools"))
+    n_rerun = wf.agent(f"{name}_rerun", profile=profile, model=model, timeout=timeout)
+    wf.join([src, n_agent], n_tools, combine=_named(join_tools, f"{name}_join_tools"))
+    wf.edge(n_tools, n_rerun, when=_named(needs_rerun, f"{name}_needs_rerun"))
+    return [n_tools, n_rerun], answer_gated
+
+
+def stage(name: str, profile: str, model, make_prompt, check, gated: bool = False):
+    """prompt ▶ agent ▶ check ─revise?─▶ redo ▶ final. Returns (entry, exit) handles.
+
+    gated: the stage runs the subtask agent; each of its agent nodes gets a tools gate and one rerun (细则 5.3).
+    """
 
     def prompt_node(value: WorkflowValue) -> WorkflowValue:
         state = _state(value)
@@ -107,12 +162,12 @@ def stage(name: str, profile: str, model, make_prompt, check):
     def runs_agent(value: WorkflowValue) -> bool:
         return not _state(value).get("skip")
 
-    def join_first(sources: list[SourceValue]) -> WorkflowValue:
-        by = _by_node(sources)
-        answer = by[name].text if name in by else None
-        return WorkflowValue(
-            text=answer or "", data={"state": _state(by[f"{name}_prompt"]), "answered": answer is not None}
-        )
+    def check_node_of(join_answer):
+        def join_first(sources: list[SourceValue]) -> WorkflowValue:
+            state, answer = join_answer(sources)
+            return WorkflowValue(text=answer or "", data={"state": state, "answered": answer is not None})
+
+        return join_first
 
     def check_node(value: WorkflowValue) -> WorkflowValue:
         state, answered = value.data["state"], value.data["answered"]
@@ -125,13 +180,6 @@ def stage(name: str, profile: str, model, make_prompt, check):
     def needs_redo(value: WorkflowValue) -> bool:
         return bool(_state(value).get("revise"))
 
-    def join_redo(sources: list[SourceValue]) -> WorkflowValue:
-        by = _by_node(sources)
-        answer = by[f"{name}_redo"].text if f"{name}_redo" in by else None
-        return WorkflowValue(
-            text=answer or "", data={"state": _state(by[f"{name}_check"]), "answered": answer is not None}
-        )
-
     def final_node(value: WorkflowValue) -> WorkflowValue:
         state, answered = value.data["state"], value.data["answered"]
         if state.pop("revise", False):
@@ -141,14 +189,12 @@ def stage(name: str, profile: str, model, make_prompt, check):
 
     timeout = CONFIG["agent_timeout"]
     n_prompt = wf.python(f"{name}_prompt", _named(prompt_node, f"{name}_prompt"))
-    n_agent = wf.agent(name, profile=profile, model=model, timeout=timeout)
+    first, first_answer = agent_step(n_prompt, f"{name}_prompt", runs_agent, name, profile, model, timeout, gated)
     n_check = wf.python(f"{name}_check", _named(check_node, f"{name}_check"), timeout=None)
-    n_redo = wf.agent(f"{name}_redo", profile=profile, model=model, timeout=timeout)
+    redo, redo_answer = agent_step(n_check, f"{name}_check", needs_redo, f"{name}_redo", profile, model, timeout, gated)
     n_final = wf.python(f"{name}_final", _named(final_node, f"{name}_final"), timeout=None)
-    wf.edge(n_prompt, n_agent, when=_named(runs_agent, f"{name}_runs_agent"))
-    wf.join([n_prompt, n_agent], n_check, combine=_named(join_first, f"{name}_join"))
-    wf.edge(n_check, n_redo, when=_named(needs_redo, f"{name}_needs_redo"))
-    wf.join([n_check, n_redo], n_final, combine=_named(join_redo, f"{name}_join_redo"))
+    wf.join([n_prompt, *first], n_check, combine=_named(check_node_of(first_answer), f"{name}_join"))
+    wf.join([n_check, *redo], n_final, combine=_named(check_node_of(redo_answer), f"{name}_join_redo"))
     return n_prompt, n_final
 
 
@@ -178,15 +224,15 @@ wf.edge(n_intake, n_implement, when=is_goal)
 wf.join([n_intake, n_implement], n_after, combine=carry_intake)
 
 consolidate_in, consolidate_out = stage(
-    "consolidate", SUBTASK, SUBTASK_MODEL, FLOW.consolidate_prompt, FLOW.consolidate_check
+    "consolidate", SUBTASK, SUBTASK_MODEL, FLOW.consolidate_prompt, FLOW.consolidate_check, gated=True
 )
 wf.edge(n_intake, consolidate_in, when=is_accum)
 
-split_in, split_out = stage("split", SUBTASK, SUBTASK_MODEL, FLOW.split_prompt, FLOW.split_check)
+split_in, split_out = stage("split", SUBTASK, SUBTASK_MODEL, FLOW.split_prompt, FLOW.split_check, gated=True)
 wf.edge(n_after, split_in, when=is_goal)
 wf.edge(consolidate_out, split_in)
 
-propose_in, propose_out = stage("propose", SUBTASK, SUBTASK_MODEL, FLOW.propose_prompt, FLOW.propose_check)
+propose_in, propose_out = stage("propose", SUBTASK, SUBTASK_MODEL, FLOW.propose_prompt, FLOW.propose_check, gated=True)
 wf.edge(split_out, propose_in)
 
 align_in, align_out = stage("align", CONFIG["align_profile"], CONFIG["align_model"], FLOW.align_prompt, align_check)

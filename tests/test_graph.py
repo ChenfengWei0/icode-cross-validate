@@ -67,6 +67,71 @@ def test_goal_mode_snake(home, tmp_path, monkeypatch):
     assert {p.name for p in w.iterdir()} <= {"snake.py", "__pycache__"}, "细则 3.1 nothing is written into the project"
 
 
+def _calling_tools(answer, w, misbehave):
+    """Wrap an answerer: before answering, the nodes in `misbehave` make a call the guard records (细则 5.3)."""
+    sys.path.insert(0, str(ROOT / "cross-validate"))
+    import cv_state as S
+
+    def wrapped(node, profile, prompt):
+        if node in misbehave:
+            record = {"time": "2999-01-01T00:00:00+00:00", "cwd": str(w), "tool": "load_skill"}
+            with (S.cv_home() / "tool-violations.jsonl").open("a", encoding="utf-8") as f:
+                f.write(json.dumps(record) + "\n")
+        base = node.removesuffix("_rerun")
+        return answer(base, profile, prompt.removeprefix("你没有可用的工具，请直接依据下面的提示作答。\n\n"))
+
+    return wrapped
+
+
+def test_tool_call_voids_answer_and_reruns(home, tmp_path, monkeypatch):
+    """细则 5.3 an answer given while calling a tool is voided and rerun once in a new session."""
+    w = tmp_path / "w"
+    shutil.copytree(SNAKE / "buggy", w, ignore=shutil.ignore_patterns("__pycache__"))
+    monkeypatch.chdir(w)
+    calls = []
+    agents = _calling_tools(snake_agents(calls), w, {"propose"})
+    report = load(home).workflow.run("实现贪吃蛇。", agents)[0].text
+    assert "**比对未通过**" in report and "**无效**" not in report
+    assert "子任务节点 propose 的回答期间调用了工具 load_skill" in report
+    assert [c[0] for c in calls] == ["implement", "split", "propose", "propose", "align"]
+    first, rerun = calls[2][2], calls[3][2]
+    assert first == rerun, "the rerun gets the same task"
+
+
+def test_tool_call_in_rerun_is_invalid(home, tmp_path, monkeypatch):
+    """细则 5.3 a rerun that calls a tool again makes the run invalid."""
+    w = tmp_path / "w"
+    shutil.copytree(SNAKE / "buggy", w, ignore=shutil.ignore_patterns("__pycache__"))
+    monkeypatch.chdir(w)
+    calls = []
+    agents = _calling_tools(snake_agents(calls), w, {"split", "split_rerun"})
+    report = load(home).workflow.run("实现贪吃蛇。", agents)[0].text
+    assert "**无效**" in report and "load_skill" in report
+    assert [c[0] for c in calls] == ["implement", "split", "split"], "nothing runs after the invalid stage"
+
+
+def test_tool_call_in_rewrite_reruns(home, tmp_path, monkeypatch):
+    """细则 5.3 the rewrite node is gated too: its voided answer is rerun once."""
+    w = tmp_path / "w"
+    shutil.copytree(SNAKE / "buggy", w, ignore=shutil.ignore_patterns("__pycache__"))
+    monkeypatch.chdir(w)
+    calls = []
+    plain = snake_agents(calls)
+
+    def answer(node, profile, prompt):
+        if node == "split" and not any(c[0] == "split" for c in calls):
+            calls.append((node, profile, prompt))
+            return "不是 JSON"
+        if node == "split_redo":
+            return plain("split", profile, prompt)
+        return plain(node, profile, prompt)
+
+    agents = _calling_tools(answer, w, {"split_redo"})
+    report = load(home).workflow.run("实现贪吃蛇。", agents)[0].text
+    assert "子任务节点 split_redo 的回答期间调用了工具 load_skill" in report and "**无效**" not in report
+    assert "切句兜底" not in report, "the rerun answer of the rewrite was used"
+
+
 def test_accumulation_mode(home, tmp_path, monkeypatch):
     """细则 4.1 4.3 15.4 accumulation mode consolidates the ledger first, then runs the same stages."""
     sys.path.insert(0, str(ROOT / "cross-validate"))

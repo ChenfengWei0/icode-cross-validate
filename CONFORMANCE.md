@@ -53,7 +53,7 @@
 | 细则 4.8 | 通过 | 5 个测试：test_no_alignment_answer、test_bad_numbers_in_formulas、test_bad_numbers_in_sentences、test_unreadable_propositions_are_not_crashes 等 |
 | 细则 5.1 | 通过 | 2 个测试：test_verify_workflow、test_only_installed_workflow_runs |
 | 细则 5.2 | 通过 | 7 个测试：test_tampering_is_detected、test_frozen_checks_run、test_tamper_fails_closed、test_results_frozen 等 |
-| 细则 5.3 | 通过 | 4 个测试：test_guard_hook、test_subtask_tool_calls_invalidate、test_goal_mode_violation_log、test_violation_without_cwd_counts |
+| 细则 5.3 | 通过 | 9 个测试：test_guard_hook、test_guard_without_result_file_blocks、test_subtask_tool_calls_invalidate、test_tool_gate_excuses_one_window 等 |
 | 细则 5.4 | 通过 | 3 个测试：test_w_must_not_change、test_tamper_fails_closed、test_w_before_frozen_before_alignment |
 | 细则 5.5 | 通过 | 3 个测试：test_no_process_survives、test_setsid_does_not_escape、test_planted_bytecode_is_not_read |
 | 细则 5.6 | 通过 | 1 个测试：test_history_guard |
@@ -156,7 +156,7 @@
 | P-1 | 通过 | 只导入标准库 |
 | P-2 | 通过 | ruff target-version = py310，workflow 声明 requires-python >=3.10 |
 | P-3 | 通过 | ruff check：All checks passed!；ruff format：58 files already formatted |
-| P-4 | 通过 | 插件本体 292 KB；含 iCode 版权声明的文件：无 |
-| P-5 | 通过 | pytest：233 passed in 120.23s (0:02:00) |
-| P-6 | 通过 | 重建以来 22 个提交 |
+| P-4 | 通过 | 插件本体 295 KB；含 iCode 版权声明的文件：无 |
+| P-5 | 通过 | pytest：238 passed in 199.35s (0:03:19) |
+| P-6 | 通过 | 重建以来 23 个提交 |
 | P-7 | 通过 | 含令牌或密钥的文件：无 |

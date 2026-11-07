@@ -29,7 +29,7 @@ iCode 的扩展点有：工作流、agent 配置、hooks、skills、MCP、外部
 | 文档要求 | 本插件的做法 |
 | --- | --- |
 | 触发条件：harness 报告目标达成 | 目标模式：工作流先让主 agent 完成目标，主 agent 节点正常结束即为目标达成。积累模式：由 hooks 在一轮或会话结束时、或由用户手动启动（第 16 节）。 |
-| 子任务看不到主任务的任何产物（约束 3） | 子任务 agent `cv-subtask` 的提示里只有需求。它的工具调用由 hook 一律拦截并记录，记录不为空时这次运行无效（细则 5.3）。 |
+| 子任务看不到主任务的任何产物（约束 3） | 子任务 agent `cv-subtask` 的提示里只有需求。它的工具调用由 hook 一律拦截并记录；调用过工具的那次回答作废，用新会话重跑一次，重跑仍调用工具时这次运行无效（细则 5.3）。 |
 | 对齐 agent 读代码、使用环境中的工具 | 对齐 agent `cv-align`，带读、写、搜索、shell 工具，在快照中工作。 |
 | 公式生成、命题检查、运行检查、写报告 | 工作流中的 Python 节点，不交给模型。 |
 | 需求的累加和纠正（"别的机制"） | hooks：`user_prompt_submit` 记录用户消息；`after_turn`、`session_end` 判断是否触发。hooks 只能运行命令，所以由命令行工具 `cv` 中的启动器在快照里启动工作流进程。 |
@@ -74,7 +74,7 @@ snapshots/<run>/          快照，运行结束后默认删除（细则 16.4）
 | `sentences.json` | 程序 | 切句与分类（第 6 节） |
 | `subtask.txt`、`subtask-revised.txt` | 子任务 agent | 声明、清单、命题的原始输出及重写（第 7 节） |
 | `propositions.json` | 程序 | 解析后的命题、公式语法树、检查结论（第 8 至 10 节） |
-| `tool-violations.jsonl` | hook | 子任务 agent 的工具调用记录，正常应为空（细则 5.3） |
+| `tool-violations.jsonl` | hook | 子任务 agent 的工具调用记录，正常应为空；有记录的回答已作废重跑（细则 5.3） |
 | `history-reads.jsonl` | hook | 被拦下的、访问状态目录的工具调用，只在全局目录中（细则 5.6） |
 | `align/` | 对齐 agent | `checks.json` 及它写的脚本（第 11 节） |
 | `traces/` | checker | 每次轨迹运行的轨迹、退出码、输出末尾（第 12 节） |
@@ -106,14 +106,16 @@ snapshots/<run>/          快照，运行结束后默认删除（细则 16.4）
 | 算法 1 | 节点 | 执行者 |
 | --- | --- | --- |
 | 触发条件 | 目标模式：`implement`；积累模式：hooks 或 `cv check`（第 16 节） | 主 agent / 启动器 |
-| （上游）整理最终需求 | `consolidate` → `consolidate_check`，不合格时 `consolidate_revise` 一次（第 15 节） | 子任务 agent → 程序 |
-| 第 1 行 切句、分类 | `split` → `split_check`，不合格时 `split_revise` 一次 | 子任务 agent → 程序 |
+| （上游）整理最终需求 | `consolidate` → `consolidate_check`，不合格时 `consolidate_redo` 一次（第 15 节） | 子任务 agent → 程序 |
+| 第 1 行 切句、分类 | `split` → `split_check`，不合格时 `split_redo` 一次 | 子任务 agent → 程序 |
 | 第 2、3 行 翻译、推理 | `propose`（同一次调用） | 子任务 agent |
-| 第 4 行 检查命题 | `propose_check`；不通过的送 `propose_revise` 重写一次，再检查一次 | 程序，重写由子任务 agent 完成 |
+| 第 4 行 检查命题 | `propose_check`；不通过的送 `propose_redo` 重写一次，再检查一次 | 程序，重写由子任务 agent 完成 |
 | 第 5 行 句子 → 公式 | `propose_check`（解析成功是检查通过的条件之一） | 程序 |
-| 第 6 行 交给对齐 agent | `align` → `align_check`，格式不合法时 `align_revise` 一次 | 对齐 agent → 程序 |
+| 第 6 行 交给对齐 agent | `align` → `align_check`，格式不合法时 `align_redo` 一次 | 对齐 agent → 程序 |
 | 第 7 行 运行检查 | `run_checks` | 程序（checker） |
 | 第 8 行 写报告 | `report` | 程序 |
+
+子任务的每个 agent 节点（含重写）之后有一个程序节点 `<节点>_tools`，回答期间有工具调用时由它安排 `<节点>_rerun` 重跑一次（细则 5.3）。
 
 细则 4.5　实现算法 1 某一行的函数，用注释 `# 算法1 第N行` 标注。
 
@@ -160,10 +162,20 @@ snapshots/<run>/          快照，运行结束后默认删除（细则 16.4）
 - 包装进程以 `python -I` 启动，它所在的目录不进入模块搜索路径。
 
 细则 5.3　**子任务 agent 不得调用工具。**
-- `cv-subtask.yaml` 不配置任何工具，并关闭 skills 的自动加载（`auto_load_user_agents_skills: false`、`auto_load_cwd_agents_skills: false`）。iCode 仍会给每个 agent 附上 `sleep` 和三个 skill 工具。
-- 全局 hooks 中有一个阻断型 `before_tool_call` hook，`match` 限定为 `cv-subtask`。它拦下这个 agent 的任何工具调用，并把调用追加到运行目录的 `tool-violations.jsonl`。运行目录的路径由环境变量 `CV_RUN_DIR` 传入。
-- 目标模式下工作流由用户在 iCode 中启动，iCode 进程里没有 `CV_RUN_DIR`。这时 hook 把调用追加到 `~/.chrys/cross-validate/tool-violations.jsonl`，每行带时间和 `cwd`；检查节点读取 `cwd` 与 W 相同、时间不早于本次运行开始的记录。
-- 每个子任务节点之后的检查节点确认 `tool-violations.jsonl` 为空；不为空，这次运行无效。全局记录中缺少 `cwd` 的行无法归属，按时间对所有运行都算数（宁可误判为无效）；hook 取不到载荷中的 `cwd` 时，记下它自己的工作目录。
+- `cv-subtask.yaml` 不配置任何工具，并关闭 skills 的自动加载（`auto_load_user_agents_skills: false`、`auto_load_cwd_agents_skills: false`）。iCode 仍会给每个普通（非 ACP）agent 附上 `sleep`、三个 skill 工具，以及一段教它调用 `load_skill` 的系统提示，即使没有任何 skill；这些在 profile 和工作流节点的参数中都关不掉（iCode `ALWAYS_LOADED_TOOL_CATEGORIES`、`ChrysSkillsProvider.before_run`）。所以子任务 agent 仍可能发出工具调用，插件要处理这种情况，不能假定它不发生。
+- 全局 hooks 中有一个阻断型 `before_tool_call` hook（`on_error: block`），`match` 限定为 `cv-subtask`。它在工具执行之前拦下这个 agent 的任何工具调用，回给 agent 一句固定的拒绝理由，并把调用追加到运行目录的 `tool-violations.jsonl`。运行目录的路径由环境变量 `CV_RUN_DIR` 传入。hook 拿不到写决定的文件（`CHRYS_HOOK_RESULT`）时以非零状态退出，由 `on_error: block` 拦下，不放行。
+- 目标模式下工作流由用户在 iCode 中启动，iCode 进程里没有 `CV_RUN_DIR`。这时 hook 把调用追加到 `~/.chrys/cross-validate/tool-violations.jsonl`，每行带时间和 `cwd`；检查节点读取 `cwd` 与 W 相同、时间不早于本次运行开始的记录。全局记录中缺少 `cwd` 的行无法归属，按时间对所有运行都算数（宁可多算）；hook 取不到载荷中的 `cwd` 时，记下它自己的工作目录。
+- **作废并重跑一次。** 每个子任务 agent 节点（各阶段的首次回答 `<阶段>` 和重写 `<阶段>_redo`）之后有一个程序节点 `<节点>_tools`。它数这次运行的记录，条数超过"已抵消"的条数，说明这个节点的回答期间有工具调用：
+  - 这次回答作废，不检查、不保存，它的内容不进入后续任何节点；
+  - 新增的条数计入"已抵消"；
+  - 同一份提示前加一句固定的说明"你没有可用的工具，请直接依据下面的提示作答"，交给 `<节点>_rerun` 重跑。重跑是新会话（细则 4.6）；
+  - 重跑的回答代替被作废的回答，按原节点的回答检查：首次回答的重跑不合格时照常有一次重写（细则 6.1、9.3、15.4），重写的重跑不合格时按重写后仍不合格处理。重跑没有回答时，按原节点没有回答处理（细则 4.8）；
+  - 每个节点最多重跑一次；
+  - 报告注明哪个节点的回答因调用了什么工具被作废重跑。
+- iCode 对 agent 节点的自动重试（默认 3 次）都在这个窗口内：任何一次尝试中的调用都使这个节点的回答作废。
+- 这样做的依据：保证约束 3 的是 hook 在工具执行之前拒绝调用，agent 只收到固定的拒绝理由，拿不到任何文件或命令输出，也没有副作用。作废和新会话保证被拒绝的尝试不影响答案。hook 没有安装或被关掉时既不拦截也不记录，这一条不能察觉，与原来相同。
+- 每个子任务节点之后的检查节点、以及报告节点，确认记录条数不超过已抵消的条数；超过时（重跑又调用了工具，或者记录出现在任何 `_tools` 节点之外），这次运行无效。条数只增不减；其他运行的记录、写到一半的行、在 `_tools` 之后才写入的记录，只会多算，不会少算（宁可误判为无效）。
+- `_tools`、`_rerun` 只用于子任务 agent；对齐阶段不设。
 
 细则 5.6　**agent 不去读其他运行的结果。** 状态目录里有历史运行的命题、检查脚本和报告，主 agent 和对齐 agent 读到它们，就不再是独立的一次检查，"报告对主 agent 不可见"也会落空。
 - 全局 hooks 中有三个阻断型 `before_tool_call` hook，用 `match.args` 分别匹配工具的 `path`、`command`、`working_dir` 参数，只有提到状态目录时才触发，平常的工具调用不启动任何进程。
@@ -732,7 +744,7 @@ snapshots/<run>/          快照，运行结束后默认删除（细则 16.4）
 
 | 结论 | 条件 |
 | --- | --- |
-| 无效 | 细则 5.2、5.3、5.4 中任何一条不满足 |
+| 无效 | 细则 5.2、5.4 中任何一条不满足，或出现细则 5.3 所说的无效情形 |
 | 无结论 | 没有命题进入检查，或被丢弃的命题超过提交总数的一半（`max_discard_ratio`，默认 0.5） |
 | 比对未通过 | 至少一条命题的结果是失败或确定违反，需求未说明的命题除外（细则 13.8） |
 | 比对通过 | 其余情况 |

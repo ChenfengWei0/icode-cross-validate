@@ -794,14 +794,16 @@ def _guard(payload: dict) -> int:
     with contextlib.suppress(OSError), open(path, "a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
     result = os.environ.get("CHRYS_HOOK_RESULT")
-    if result:
-        Path(result).write_text(
-            json.dumps(
-                {"action": "block", "reason": "交叉验证的子任务 agent 不得调用工具，只能依据提示中的需求作答"},
-                ensure_ascii=False,
-            ),
-            encoding="utf-8",
-        )
+    if not result:
+        print("交叉验证的子任务 agent 不得调用工具", file=sys.stderr)
+        return 2  # no decision file: a non-zero exit is blocked by on_error: block, never allowed
+    Path(result).write_text(
+        json.dumps(
+            {"action": "block", "reason": "交叉验证的子任务 agent 不得调用工具，只能依据提示中的需求作答"},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
     return 0
 
 

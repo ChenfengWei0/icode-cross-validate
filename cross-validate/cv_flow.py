@@ -196,11 +196,33 @@ def history_reads(state: dict) -> int:
     )
 
 
+def _tool_names(records: list[dict]) -> str:
+    return "、".join(sorted({str(v.get("tool", "?")) for v in records}))
+
+
 def check_violations(state: dict) -> None:
+    """细则 5.3: records beyond those excused by a rerun make the run invalid."""
     found = violations(state)
-    if found:
-        names = sorted({str(v.get("tool", "?")) for v in found})
-        _invalid(state, f"子任务 agent 调用了工具 {'、'.join(names)}（细则 5.3）")
+    excused = state.get("tool_excused", 0)
+    if len(found) > excused:
+        _invalid(state, f"子任务 agent 调用了工具 {_tool_names(found[excused:])}（细则 5.3）")
+
+
+RERUN_PREFIX = "你没有可用的工具，请直接依据下面的提示作答。\n\n"
+
+
+def tool_gate(state: dict, node: str, task: str) -> str | None:
+    """细则 5.3: calls during this node's answer void it; returns the prompt of the one rerun, or None."""
+    found = violations(state)
+    excused = state.get("tool_excused", 0)
+    if len(found) <= excused:
+        return None
+    state["tool_excused"] = len(found)
+    _note(
+        state,
+        f"子任务节点 {node} 的回答期间调用了工具 {_tool_names(found[excused:])}，已被拦下；这次回答作废，用新会话重跑一次（细则 5.3）",
+    )
+    return RERUN_PREFIX + task
 
 
 # ---------------------------------------------------------------------------------------------------

@@ -110,6 +110,23 @@ def test_subtask_tool_calls_invalidate(home, tmp_path):
     assert "**无效**" in text and "read_file" in text
 
 
+def test_tool_gate_excuses_one_window(home, tmp_path):
+    """细则 5.3 calls during an answer are excused once by a rerun; later calls still make the run invalid."""
+    state, _ = goal_run(home, tmp_path)
+    log = Path(state["run"]) / "tool-violations.jsonl"
+    assert FLOW.tool_gate(state, "propose", "任务") is None
+    log.write_text(json.dumps({"tool": "load_skill"}) + "\n", encoding="utf-8")
+    rerun = FLOW.tool_gate(state, "propose", "任务")
+    assert rerun == FLOW.RERUN_PREFIX + "任务" and state["tool_excused"] == 1
+    assert any("propose" in n and "load_skill" in n for n in state["notes"])
+    FLOW.check_violations(state)
+    assert not state.get("invalid")
+    with log.open("a", encoding="utf-8") as f:
+        f.write(json.dumps({"tool": "sleep"}) + "\n")
+    FLOW.check_violations(state)
+    assert state["invalid"] and "sleep" in state["invalid"][0] and "load_skill" not in state["invalid"][0]
+
+
 def test_goal_mode_violation_log(home, tmp_path):
     """细则 5.3 without CV_RUN_DIR the hook's global log counts for runs in the same directory."""
     state, w = goal_run(home, tmp_path)
