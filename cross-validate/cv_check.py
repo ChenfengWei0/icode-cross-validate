@@ -97,6 +97,28 @@ def _cn_number(s: str) -> int | None:
     return total + section + (digit or 0)
 
 
+def _spaces(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def signature_problems(tree: dict, quotes: list[str]) -> list[str]:
+    """细则 9.1 第 5 项, 7.6: a translated signature is written as the requirement writes it."""
+    said = "".join(re.sub(r"\s+", "", q) for q in quotes)
+    problems = []
+    for n in F.walk(tree):
+        if n["op"] != "struct" or n.get("kind") != "signature" or n["args"][1]["op"] != "lit":
+            continue
+        text = re.sub(r"\s+", "", str(n["args"][1]["value"]))
+        params, _, returns = re.split(r"(->|→)", text, maxsplit=1) if re.search(r"->|→", text) else (text, "", "")
+        if params and params not in said:
+            problems.append(
+                f"签名的参数表 {params} 没有逐字出现在引文中：照需求原文写，原文没有的类型注解不要加（细则 7.6）"
+            )
+        if returns and f"->{returns}" not in said and f"→{returns}" not in said:
+            problems.append(f"签名的返回类型 {returns} 没有出现在引文中：需求没写返回类型时不写 → 部分（细则 7.6）")
+    return problems
+
+
 def quote_numbers(quote: str) -> list[float]:
     """Every number in a quote, by value: ASCII, full-width and simple Chinese numerals."""
     out = []
@@ -270,34 +292,46 @@ def _check(all_parsed: dict, parsed: dict, sentences: list[dict], original: str)
                 problems.append("翻译的依据应用「」引用原话")
             hosted = []
             for quote in quotes:
-                hosts = [s for s in labelled if any(quote and quote in q for q in s["quotable"])]
+                # 细则 7.3: the basis is one line, so a quote of an example over several lines has its line
+                # breaks written as spaces; how much whitespace there is does not count.
+                flat = _spaces(quote)
+                hosts = [s for s in labelled if any(flat and flat in _spaces(q) for q in s["quotable"])]
                 if not hosts:
                     problems.append(f"引文「{quote}」不是带标签句子的原话片段")
                     continue
-                hosted.append((quote, sorted({lb for s in hosts for lb in s["labels"]})))
+                examples_hosting = {s["id"] for s in hosts if "示例" in s["labels"]}
+                hosted.append((quote, sorted({lb for s in hosts for lb in s["labels"]}), examples_hosting))
             if (
                 hosted
                 and pattern
                 and pattern != UNPATTERNED
-                and not any(pattern_basis(pattern, q, labels) for q, labels in hosted)
+                and not any(pattern_basis(pattern, q, labels) for q, labels, _ in hosted)
             ):
                 problems.append(f"句式 {pattern} 在引文中没有对应的关键词或标签（细则 9.1 第 5 项）")
-            for quote, labels in hosted:
+            for quote, _labels, _ids in hosted:
                 if tree is not None:
                     problems.extend(
                         f"引文中的异常名 {name} 丢失了：写进谓词的名称或含义，不要抽象掉（细则 9.1 第 5 项）"
                         for name in lost_exceptions(quote, rec["sentence"], formula_field or "", tree, decls)
                     )
-                if tree is not None and "示例" in labels:
-                    have = quote_numbers(quote)
-                    # 细则 9.1 第 5 项: S of 从 S 出发 only selects the runs; it asserts nothing.
-                    scope = tree["args"][1] if pattern == "从出发" else tree
-                    numbers = [n for m in F.walk(scope) if m["op"] == "lit" for n in _numbers(m["value"])]
-                    problems.extend(
-                        f"数 {n} 没有在引文中出现（翻译不做推广）"
-                        for n in numbers
-                        if not any(abs(n - h) <= 1e-9 for h in have)
-                    )
+            if tree is not None and hosted:
+                problems.extend(signature_problems(tree, [q for q, _, _ in hosted]))
+            examples = [(q, ids) for q, labels, ids in hosted if "示例" in labels]
+            if tree is not None and examples:
+                # 细则 9.1 第 5 项: the numbers may come from several quotes of one example sentence (an input
+                # and its output), never from two different sentences.
+                scope = tree["args"][1] if pattern == "从出发" else tree  # S of 从 S 出发 asserts nothing
+                numbers = [n for m in F.walk(scope) if m["op"] == "lit" for n in _numbers(m["value"])]
+                pools = [
+                    [h for q, ids in examples if sid in ids for h in quote_numbers(q)]
+                    for sid in sorted({i for _, ids in examples for i in ids})
+                ]
+                missing = [n for n in numbers if not any(abs(n - h) <= 1e-9 for h in pools[0])] if pools else []
+                for pool in pools[1:]:
+                    lacking = [n for n in numbers if not any(abs(n - h) <= 1e-9 for h in pool)]
+                    if len(lacking) < len(missing):
+                        missing = lacking
+                problems.extend(f"数 {n} 没有在引文中出现（翻译不做推广）" for n in missing)
         # 6. reasoning
         if rec["source"] == "推理":
             m = REASON.match(rec["basis"])

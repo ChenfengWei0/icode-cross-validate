@@ -159,6 +159,8 @@ def stage(name: str, profile: str, model, make_prompt, check, gated: bool = Fals
             text = make_prompt(state)
         except Exception as e:  # 细则 4.8: untrusted input must not crash the node
             return WorkflowValue(text="", data={**state, "stopped": f"{name}_prompt 节点出错：{e}", "skip": True})
+        if text is None:  # nothing for this stage to do (细则 7.5: no accepted proposition to review)
+            return WorkflowValue(text="", data={**state, "skip": True})
         return WorkflowValue(text=text, data={**state, "skip": False})
 
     def runs_agent(value: WorkflowValue) -> bool:
@@ -237,8 +239,11 @@ wf.edge(consolidate_out, split_in)
 propose_in, propose_out = stage("propose", SUBTASK, SUBTASK_MODEL, FLOW.propose_prompt, FLOW.propose_check, gated=True)
 wf.edge(split_out, propose_in)
 
+review_in, review_out = stage("review", SUBTASK, SUBTASK_MODEL, FLOW.review_prompt, FLOW.review_check, gated=True)
+wf.edge(propose_out, review_in)
+
 align_in, align_out = stage("align", CONFIG["align_profile"], CONFIG["align_model"], FLOW.align_prompt, align_check)
-wf.edge(propose_out, align_in)
+wf.edge(review_out, align_in)
 
 n_run = wf.python("run_checks", run_checks, timeout=None)
 n_report = wf.python("report", report, timeout=None)

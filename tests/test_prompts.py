@@ -100,3 +100,9 @@ def test_prompts_do_not_borrow_from_the_evaluations():
         # ASCII words as whole words (put is not in unstated_inputs); Chinese ones anywhere.
         found = sorted(w for w in words if _mentions(text, w))
         assert not found, f"{path.name}: {found}"
+
+
+def test_unstated_criterion_in_prompt():
+    """细则 7.4 the subtask is told what counts as unstated, and that "usual practice" is no requirement."""
+    assert "至少两种读法" in PROPOSE and "“常见做法”“几乎所有实现都会这样做”不算需求规定" in PROPOSE
+    assert "几乎所有实现都会这样做的，不要标" not in PROPOSE

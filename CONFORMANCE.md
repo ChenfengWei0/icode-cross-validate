@@ -1,7 +1,7 @@
 # 标准核验结果
 
 由 `python3 scripts/check_standards.py` 生成，标准见 `STANDARDS.md`。
-合计：通过 136，未通过 0，跳过 0，人工 1。
+合计：通过 141，未通过 0，跳过 0，人工 1。
 
 
 ## D：文档要求
@@ -50,9 +50,9 @@
 | 细则 4.5 | 通过 | 1 个测试：test_algorithm_lines_annotated |
 | 细则 4.6 | 通过 | 1 个测试：test_placeholders_filled |
 | 细则 4.7 | 通过 | agent 节点用 config 的超时，run_checks 无超时，不设自动重试 |
-| 细则 4.8 | 通过 | 5 个测试：test_no_alignment_answer、test_bad_numbers_in_formulas、test_bad_numbers_in_sentences、test_unreadable_propositions_are_not_crashes 等 |
+| 细则 4.8 | 通过 | 6 个测试：test_no_alignment_answer、test_bad_numbers_in_formulas、test_bad_numbers_in_sentences、test_unreadable_propositions_are_not_crashes 等 |
 | 细则 5.1 | 通过 | 2 个测试：test_verify_workflow、test_only_installed_workflow_runs |
-| 细则 5.2 | 通过 | 7 个测试：test_tampering_is_detected、test_frozen_checks_run、test_tamper_fails_closed、test_results_frozen 等 |
+| 细则 5.2 | 通过 | 8 个测试：test_tampering_is_detected、test_frozen_checks_run、test_tamper_fails_closed、test_results_frozen 等 |
 | 细则 5.3 | 通过 | 11 个测试：test_guard_hook、test_guard_without_result_file_blocks、test_subtask_tool_calls_invalidate、test_tool_gate_excuses_one_window 等 |
 | 细则 5.4 | 通过 | 3 个测试：test_w_must_not_change、test_tamper_fails_closed、test_w_before_frozen_before_alignment |
 | 细则 5.5 | 通过 | 3 个测试：test_no_process_survives、test_setsid_does_not_escape、test_planted_bytecode_is_not_read |
@@ -60,9 +60,13 @@
 | 细则 6.1 | 通过 | 3 个测试：test_revision_paths、test_split_must_cover_r_verbatim、test_split_fallback |
 | 细则 6.2 | 通过 | 1 个测试：test_labels |
 | 细则 6.3 | 通过 | 2 个测试：test_goal_requirement、test_quotable |
+| 细则 6.4 | 通过 | 3 个测试：test_example_quoted_over_lines_and_in_parts、test_examples_are_not_split、test_two_examples_in_a_row_stay_two |
 | 细则 7.1 | 通过 | 4 个测试：test_glued_ambiguity、test_names_round_trip、test_interfaces_on_one_line、test_declarations |
 | 细则 7.2 | 通过 | 4 个测试：test_checklist_in_prompt、test_checklist_ids_exist、test_interrupted_output_is_named、test_checklist |
-| 细则 7.3 | 通过 | 4 个测试：test_decorated_fields_and_lost_blocks、test_unstated_reading_is_marked、test_prompts_ask_for_reachable_states_and_meaning_not_names、test_propositions |
+| 细则 7.3 | 通过 | 6 个测试：test_example_quoted_over_lines_and_in_parts、test_decorated_fields_and_lost_blocks、test_unstated_reading_is_marked、test_prompts_ask_for_reachable_states_and_meaning_not_names 等 |
+| 细则 7.4 | 通过 | 1 个测试：test_unstated_criterion_in_prompt |
+| 细则 7.5 | 通过 | 8 个测试：test_review_marks_reach_the_conclusion、test_review_answer_format、test_review_rejects_what_it_may_not_mark、test_review_round_trip 等 |
+| 细则 7.6 | 通过 | 1 个测试：test_translated_signature_is_written_as_the_requirement |
 | 细则 8.1 | 通过 | 3 个测试：test_lexing、test_bad_numbers_in_formulas、test_bad_numbers_in_sentences |
 | 细则 8.2 | 通过 | 1 个测试：test_terms |
 | 细则 8.3 | 通过 | 2 个测试：test_atoms、test_glued_ambiguity |
@@ -72,7 +76,7 @@
 | 细则 8.7 | 通过 | 2 个测试：test_quantifiers、test_types_and_arity |
 | 细则 8.8 | 通过 | 2 个测试：test_reserved_words、test_reserved_words_in_prompt |
 | 细则 8.9 | 通过 | 1 个测试：test_snake_propositions |
-| 细则 9.1 | 通过 | 21 个测试：test_snake_example_passes、test_fields_and_ids、test_parse_and_unpatterned、test_declared_and_bound 等 |
+| 细则 9.1 | 通过 | 24 个测试：test_snake_example_passes、test_fields_and_ids、test_parse_and_unpatterned、test_declared_and_bound 等 |
 | 细则 9.2 | 通过 | 3 个测试：test_checklist_ids_exist、test_rewrite_checks_new_declarations、test_declarations |
 | 细则 9.3 | 通过 | 4 个测试：test_revision_paths、test_rewrite_checks_new_declarations、test_rewrite_keeps_every_proposition、test_renumbered_duplicate_keeps_the_other |
 | 细则 9.4 | 人工 | “一条命题只说一件事”无法机械判断，只在提示中要求（README 细则 9.4、第 18 节） |
@@ -86,7 +90,7 @@
 | 细则 11.4 | 通过 | 1 个测试：test_trace_checks |
 | 细则 11.5 | 通过 | 2 个测试：test_coverage、test_verify_checks_in_checks_json |
 | 细则 11.6 | 通过 | 4 个测试：test_coverage、test_no_alignment_answer、test_flagged_checks_cover_nothing、test_verify_checks_in_checks_json |
-| 细则 11.7 | 通过 | 6 个测试：test_validate_format、test_revision_paths、test_preflight_reports_the_format_and_nothing_else、test_preflight_goes_back_once 等 |
+| 细则 11.7 | 通过 | 8 个测试：test_validate_format、test_revision_paths、test_scenario_problem、test_preflight_reports_the_format_and_nothing_else 等 |
 | 细则 11.8 | 通过 | 5 个测试：test_budget、test_truncation、test_budget_cut_does_not_pass、test_judging_is_bounded 等 |
 | 细则 11.9 | 通过 | 1 个测试：test_frozen_checks_run |
 | 细则 11.10 | 通过 | 2 个测试：test_alignment_prompt_asks_for_strict_checks_that_reach_the_hard_cases、test_prompts_ask_for_reachable_states_and_meaning_not_names |
@@ -95,7 +99,7 @@
 | 细则 12.2 | 通过 | 2 个测试：test_time_convention、test_prompt_shows_where_an_event_goes |
 | 细则 12.3 | 通过 | 5 个测试：test_values、test_no_contradiction_is_true、test_big_integers_exact、test_missing_key_after_violation 等 |
 | 细则 12.4 | 通过 | 5 个测试：test_entity_constant、test_listed_entities、test_only_individual_may_be_keyed_by_entity_name、test_entity_with_no_individual_now_is_false_not_an_error 等 |
-| 细则 12.5 | 通过 | 1 个测试：test_scenario |
+| 细则 12.5 | 通过 | 2 个测试：test_translated_scenario_only_on_run_zero、test_scenario |
 | 细则 12.6 | 通过 | 6 个测试：test_nonzero_exit_fails、test_empty_trace、test_trace_must_be_a_regular_file、test_partial_line_after_timeout 等 |
 | 细则 13.1 | 通过 | 2 个测试：test_four_values、test_progression_matches_reference |
 | 细则 13.2 | 通过 | 3 个测试：test_four_values、test_facts_at_state_zero、test_progression_matches_reference |
@@ -104,9 +108,9 @@
 | 细则 13.5 | 通过 | 2 个测试：test_liveness、test_liveness_mark |
 | 细则 13.6 | 通过 | 1 个测试：test_trace_checks |
 | 细则 13.7 | 通过 | 2 个测试：test_antecedent_never_fired、test_harness_cannot_hide_or_skip_the_check |
-| 细则 13.8 | 通过 | 2 个测试：test_what_is_only_for_a_person_catches_nothing、test_what_the_requirement_leaves_open_is_for_a_person |
+| 细则 13.8 | 通过 | 4 个测试：test_review_marks_reach_the_conclusion、test_what_is_only_for_a_person_catches_nothing、test_what_the_requirement_leaves_open_is_for_a_person、test_conflict_group_fails_only_when_every_side_fails |
 | 细则 14.1 | 通过 | 3 个测试：test_conclusions、test_report_text_cannot_forge_conclusion、test_verify_in_the_checker_and_the_report |
-| 细则 14.2 | 通过 | 3 个测试：test_tampering_is_detected、test_conclusions、test_what_the_requirement_leaves_open_is_for_a_person |
+| 细则 14.2 | 通过 | 6 个测试：test_tampering_is_detected、test_conclusions、test_review_marks_reach_the_conclusion、test_what_the_requirement_leaves_open_is_for_a_person 等 |
 | 细则 14.3 | 通过 | 1 个测试：test_turn_and_session_triggers |
 | 细则 15.1 | 通过 | 3 个测试：test_init_rules、test_ignored_project_is_not_git、test_hooks_find_enabled_parent |
 | 细则 15.2 | 通过 | 2 个测试：test_record_hook_filters、test_append_ids_and_lock |
@@ -132,6 +136,7 @@
 | 细则 17.9 | 通过 | 1 个测试：test_translation_of_a_rule_and_an_example |
 | 细则 17.10 | 通过 | 1 个测试：test_state_dependent_needs_a_time |
 | 细则 17.11 | 通过 | 偏离说明，核验其实现细则 13.8、14.2 |
+| 细则 17.12 | 通过 | 1 个测试：test_conflict_group_fails_only_when_every_side_fails |
 
 ## I：iCode 扩展规范
 
@@ -155,8 +160,8 @@
 | --- | --- | --- |
 | P-1 | 通过 | 只导入标准库 |
 | P-2 | 通过 | ruff target-version = py310，workflow 声明 requires-python >=3.10 |
-| P-3 | 通过 | ruff check：All checks passed!；ruff format：58 files already formatted |
-| P-4 | 通过 | 插件本体 298 KB；含 iCode 版权声明的文件：无 |
-| P-5 | 通过 | pytest：250 passed in 196.93s (0:03:16) |
-| P-6 | 通过 | 重建以来 24 个提交 |
+| P-3 | 通过 | ruff check：All checks passed!；ruff format：64 files already formatted |
+| P-4 | 通过 | 插件本体 327 KB；含 iCode 版权声明的文件：无 |
+| P-5 | 通过 | pytest：280 passed in 266.06s (0:04:26) |
+| P-6 | 通过 | 重建以来 25 个提交 |
 | P-7 | 通过 | 含令牌或密钥的文件：无 |

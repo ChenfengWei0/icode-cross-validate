@@ -84,6 +84,25 @@ def test_scenario(decls):
     assert M.judge(tree, match, ENT)["result"] == M.PASSED
 
 
+def test_scenario_problem(decls):
+    """细则 11.7 the trial says which part of a 从 S 出发 antecedent a trace misses, never the verdict."""
+    tree, _ = G.parse_sentence("从 蛇的长度 等于 3 出发，依次执行 右、下，之后 游戏 结束", decls)
+    problem = lambda states: M.scenario_problem(tree, states, ENT)  # noqa: E731
+    assert "动作序列与句子不符" in problem([st(3, action="左"), st(3, action="下"), st(3, action=None)])
+    assert "不满足起始条件" in problem([st(4, action="右"), st(4, action="下"), st(4, action=None)])
+    assert "至少要有 3 个" in problem([st(3, action="右"), st(3, action="下")])
+    assert "缺少 长度(蛇)" in problem([{"值": {}, "动作": "右"}, {"值": {}, "动作": "下"}, {"值": {}}])
+    # Reached, and the consequent fails: that is a verdict, so nothing is said.
+    assert problem([st(3, action="右"), st(3, action="下"), st(3, over=False, action=None)]) is None
+    named, _ = G.parse_sentence("从 吃到(蛇, 「f9」) 出发，依次执行 右，之后 游戏 结束", decls)
+    listed = {"蛇": ["蛇"], "食物": []}
+    states = [
+        {"实体": listed, "值": {"吃到(蛇,f9)": False}, "动作": "右"},
+        {"实体": listed, "值": {"结束(游戏)": False}},
+    ]
+    assert "'f9' 不在状态 0 的 实体 中" in M.scenario_problem(named, states, ENT)
+
+
 def test_order():
     """细则 13.3 失败（检查）＝确定违反 ＜ 失败（对齐）＜ 推定为假 ＜ 推定为真 ＜ 确定成立 ＜ 通过."""
     chain = [M.VIOLATED, M.ALIGN_FAILED, M.PRESUMED_FALSE, M.PRESUMED_TRUE, M.SATISFIED, M.PASSED]

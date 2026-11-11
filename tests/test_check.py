@@ -144,3 +144,44 @@ def test_reasoning_item():
     )
     assert any("不是九项之一" in x for x in out["R11"]["problems"])
     assert any("没有列出 R12" in x for x in out["R12"]["problems"])
+
+
+def test_example_quoted_over_lines_and_in_parts():
+    """细则 7.3 6.4 9.1 第 5 项 an example on two lines is quoted with spaces, or as input and output apart;
+    numbers may come from the quotes of one example sentence, not from two sentences."""
+    one = ">>> move(1, 2)\n    [3]"
+    two = "例如 move(5, 6) 得到 [7]。"
+    original = one + "\n" + two
+    sentences = [
+        {"id": "S1", "text": one, "labels": ["示例"], "quotable": [one]},
+        {"id": "S2", "text": two, "labels": ["示例"], "quotable": [two]},
+    ]
+    out = check(
+        "编号  R11\n来源  翻译\n依据  「>>> move(1, 2) [3]」\n句子  调用 `move`(1, 2) 得到 [3]\n\n"
+        "编号  R12\n来源  翻译\n依据  「move(1, 2)」「[3]」\n句子  调用 `move`(1, 2) 得到 [3]\n\n"
+        "编号  R13\n来源  翻译\n依据  「move(1, 2)」「[7]」\n句子  调用 `move`(1, 2) 得到 [7]",
+        sentences,
+        original,
+        decls="接口  move  需求中的函数\n",
+    )
+    assert out["R11"]["problems"] == [] and out["R12"]["problems"] == []
+    assert any("数 7" in x for x in out["R13"]["problems"])  # input of one example, output of another
+
+
+def test_numbers_are_not_pooled_through_a_rule_sentence():
+    """细则 9.1 第 5 项 quotes of two example sentences are not pooled just because a rule sentence holds both."""
+    one, two = "例如 move(1) 得到 [3]。", "例如 move(5) 得到 [7]。"
+    rule = "move(1) 与 [7] 都合法。"
+    original = one + two + rule
+    sentences = [
+        {"id": "S1", "text": one, "labels": ["示例"], "quotable": [one]},
+        {"id": "S2", "text": two, "labels": ["示例"], "quotable": [two]},
+        {"id": "S3", "text": rule, "labels": ["规则"], "quotable": [rule]},
+    ]
+    out = check(
+        "编号  R11\n来源  翻译\n依据  「move(1)」「[7]」\n句子  调用 `move`(1) 得到 [7]",
+        sentences,
+        original,
+        decls="接口  move  需求中的函数\n",
+    )
+    assert any("没有在引文中出现" in x for x in out["R11"]["problems"])

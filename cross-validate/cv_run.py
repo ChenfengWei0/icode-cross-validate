@@ -129,6 +129,8 @@ def preflight(
     """
     deadline = time.monotonic() + PREFLIGHT_SECONDS
     problems: list[str] = []
+    # 细则 11.7: a 从 S 出发 proposition none of whose trial traces reaches its antecedent goes back too.
+    scenario: dict[str, str | None] = {}
     with tempfile.TemporaryDirectory(prefix="cv-preflight-") as tmp:
         by_command: dict[str, list[dict]] = {}
         for check in checks:
@@ -157,11 +159,17 @@ def preflight(
             for check in users:
                 prop = props[check["proposition"]]
                 try:
-                    if prop.get("pattern") == "从出发" and not M.scenario_matches(prop["tree"], states, entities):
-                        continue
+                    if prop.get("pattern") == "从出发":
+                        why = M.scenario_problem(prop["tree"], states, entities)
+                        if why is not None:
+                            if scenario.get(prop["id"], "") is not None:
+                                scenario[prop["id"]] = f"{prop['id']}（{command}）：{why}"
+                            continue
+                        scenario[prop["id"]] = None
                     M.judge(prop["tree"], states, entities, deadline=deadline)
                 except M.AlignError as e:
                     problems.append(f"{prop['id']}（{command}）：{e}")
+    problems += [why for why in scenario.values() if why]
     return list(dict.fromkeys(problems))[:20]
 
 
@@ -213,7 +221,12 @@ def run_checks(run: Path, w: Path, props: dict[str, dict], frozen: dict, entitie
             continue
         verdicts: list[str] = []
         matched = 0
-        for i in range(check["runs"]):
+        # 细则 12.5: a translated 从 S 出发 proposition (an example) is judged only on the run that executes
+        # the sentence; elsewhere the same action names may carry other arguments.
+        example = prop.get("pattern") == "从出发" and prop.get("source") == "翻译"
+        if example:
+            rec["reason_note"] = "翻译来的从 S 出发命题只在 CV_RUN=0 的运行上判定（细则 12.5）"
+        for i in range(1 if example else check["runs"]):
             if time.monotonic() >= deadline:
                 rec["reason"] = f"预算用尽，只运行了 {i} 次"
                 break
@@ -324,6 +337,7 @@ def run_checks(run: Path, w: Path, props: dict[str, dict], frozen: dict, entitie
             "notes": notes,
             **({"vacuous": True} if vacuous else {}),
             **({"unstated": True} if props[pid].get("unstated") else {}),
+            **({"conflict": props[pid]["conflict"]} if props[pid].get("conflict") else {}),
         }
         if aside:
             by_prop[pid]["unstated_inputs"] = [

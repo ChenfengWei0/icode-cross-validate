@@ -90,7 +90,10 @@ class Trace:
         if not xs:
             raise _Absent  # 细则 12.4: nothing there now; atoms and comparisons with it are false
         if len(xs) != 1:
-            raise AlignError(f"状态 {k} 中实体 {entity} 应恰有一个个体，实际为 {xs!r}（细则 12.4）")
+            raise AlignError(
+                f"状态 {k} 中实体 {entity} 应恰有一个个体，实际为 {xs!r}：命题不带量词地用 {entity} 作参数，"
+                f"指它唯一的个体，每个状态的 实体 下只能列一个（细则 12.4）"
+            )
         return xs[0]
 
     def present(self, k: int, ind) -> bool:
@@ -540,3 +543,53 @@ def scenario_matches(tree: dict, states: list[dict], entities: set[str]) -> bool
         return holds(antecedent, Trace(states, entities), 0)
     except AlignError:
         return False
+
+
+def _conjuncts(n: dict) -> list[dict]:
+    return [c for a in n["args"] for c in _conjuncts(a)] if n["op"] == "and" else [n]
+
+
+def _action_at(n: dict):
+    """(k, a) for a conjunct 动作ₖ = a of a 从 S 出发 antecedent, else None."""
+    if n["op"] != "eq":
+        return None
+    a, b = n["args"]
+    if a["op"] == "at" and a["args"][0]["op"] == "term" and a["args"][0]["name"] == F.ACTION and b["op"] == "lit":
+        return a["k"], b["value"]
+    return None
+
+
+def _arguments(n: dict) -> list:
+    """Individuals and literals written as arguments of a predicate or term in n."""
+    return [
+        a["value"] for m in F.walk(n) if m["op"] in ("term", "pred") for a in m["args"] if a["op"] in ("lit", "ind")
+    ]
+
+
+def scenario_problem(tree: dict, states: list[dict], entities: set[str]) -> str | None:
+    """细则 11.7: why a trial trace does not reach a 从 S 出发 antecedent, or None when it does.
+
+    Only the antecedent is looked at; the consequent, the proposition's verdict, is never evaluated.
+    """
+    if scenario_matches(tree, states, entities):
+        return None
+    parts = _conjuncts(tree["args"][0])
+    wanted = [a for _, a in sorted(x for x in map(_action_at, parts) if x)]
+    last = max((n["k"] for n in F.walk(tree) if n["op"] == "at"), default=0)
+    seen = [st.get("动作") if isinstance(st, dict) else None for st in states[: len(wanted)]]
+    if seen != wanted:
+        return f"动作序列与句子不符：句子要求依次执行 {wanted}，CV_RUN=0 的轨迹开头是 {seen}"
+    if len(states) <= last:
+        return f"轨迹只有 {len(states)} 个状态，执行完句子中的动作之后至少要有 {last + 1} 个"
+    try:
+        tr = Trace(states, entities)
+        for c in parts:
+            if _action_at(c) or holds(c, tr, 0):
+                continue
+            absent = [v for v in _arguments(c) if _scalar(v) and not tr.present(0, v)]
+            if absent:
+                return f"起始条件中作参数的个体 {absent[0]!r} 不在状态 0 的 实体 中：作参数的个体要列在 实体 下"
+            return f"状态 0 不满足起始条件 {F.to_text(c)}"
+    except AlignError as e:
+        return f"起始条件无法求值：{e}"
+    return "前件没有成立"

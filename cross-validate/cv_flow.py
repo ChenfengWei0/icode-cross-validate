@@ -9,6 +9,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -360,6 +361,10 @@ def split_check(state: dict, answer: str | None, attempt: int) -> tuple[dict, st
     if errors:
         sentences = T.fallback_split(requirement)
         _note(state, "切句兜底：子任务 agent 两次都没有切对，由程序按标点切句，本次没有翻译命题（细则 6.1、17.1）")
+    else:
+        entries = S.read_json(run / "requirement.json")["entries"]
+        cuts = [e["start"] for e in entries if "start" in e] + [e["end"] for e in entries if "end" in e]
+        sentences = T.merge_examples(sentences, requirement, cuts)  # 细则 6.4
     entries = S.read_json(run / "requirement.json")["entries"]
     goal = S.read_json(run / "requirement.json")["mode"] == MODE_GOAL
     for s in sentences:
@@ -488,6 +493,206 @@ def _save_propositions(run: Path, parsed: dict, checked: list[dict]) -> None:
             "propositions": checked,
         },
     )
+
+
+# ---------------------------------------------------------------------------------------------------
+# 细则 7.5: the subtask reviews its accepted propositions, only to mark them
+# ---------------------------------------------------------------------------------------------------
+
+CONFLICT = "〔需求矛盾〕"
+_ID = re.compile(r"R\d+")
+
+
+def review_prompt(state: dict) -> str | None:
+    run = Path(state["run"])
+    data = S.read_json(run / "propositions.json") or {}
+    props = [p for p in data.get("propositions", []) if not p["problems"]]
+    if not props:
+        return None
+    listing = "\n\n".join(
+        f"编号  {p['id']}\n来源  {p['source']}\n依据  {p['basis']}\n句子  {p['sentence']}" for p in props
+    )
+    return prompt(
+        "review",
+        REQUIREMENT=(run / "requirement.txt").read_text(encoding="utf-8"),
+        DECLS=_decl_text(Decls.from_json(data["decls"])),
+        PROPOSITIONS=listing,
+    )
+
+
+def _grounded(p: dict, requirement: str) -> list[str] | None:
+    """细则 7.5: the verbatim quotes a side of a conflict rests on, or None when it rests on none."""
+    said = re.sub(r"\s+", "", requirement)
+    quotes = sorted({re.sub(r"\s+", "", q) for q in C.quotes_in(p["basis"])} - {""})
+    quotes = [q for q in quotes if q in said]
+    return quotes or None
+
+
+def _grounded_side(p: dict, requirement: str) -> list[str] | None:
+    if p["source"] == "翻译":
+        return sorted({re.sub(r"\s+", "", x) for x in C.quotes_in(p["basis"])})
+    return _grounded(p, requirement)
+
+
+def parse_review(answer: str, props: dict[str, dict], requirement: str) -> tuple[list[dict], list[tuple[str, str]]]:
+    """细则 7.5: the marks of a review answer, and (id, problem) for every line that is not a valid mark."""
+    marks, problems = [], []
+    lines = [ln.strip().strip("*").strip() for ln in answer.splitlines()]
+    lines = [ln[2:].strip() if ln.startswith("- ") else ln for ln in lines if ln and not ln.startswith("```")]
+    if [ln.rstrip("。.") for ln in lines] in ([], ["无"]):
+        return [], []
+    for line in lines:
+        fields = [f.strip().strip("*").strip() for f in re.split(r"\s{2,}|\t", line) if f.strip()]
+        pid = fields[0] if fields else ""
+        if pid not in props:
+            problems.append((pid, f"「{line[:60]}」：{pid or '（空）'} 不是通过检查的命题编号"))
+            continue
+        mark = fields[1] if len(fields) > 1 else ""
+        if mark == C.UNSTATED:
+            reason = "  ".join(fields[2:])
+            if props[pid]["source"] != "推理":
+                problems.append((pid, f"{pid}：{C.UNSTATED} 只能标推理命题，翻译逐字引用原话，原话本身就是规定"))
+            elif not all(w in reason for w in ("可以", "也可以", "这里按")):
+                problems.append((pid, f"{pid}：理由要按“需求没说……，可以……，也可以……，这里按……处理”写出两种读法"))
+            else:
+                marks.append({"id": pid, "mark": mark, "reason": reason})
+        elif mark == CONFLICT:
+            others = [x for x in re.split(r"[、,，\s]+", fields[2]) if x] if len(fields) > 2 else []
+            reason = "  ".join(fields[3:])
+            bad = [x for x in others if x not in props or x == pid]
+            # 细则 7.5: a side with no verbatim quote is dropped; the rest stand when one of them is left.
+            dropped = [x for x in others if x not in bad and _grounded_side(props[x], requirement) is None]
+            others = [x for x in others if x not in dropped]
+            if dropped and not others:
+                problems.append(
+                    (
+                        pid,
+                        f"{pid}：{dropped[0]} 的依据中没有需求原文的逐字引文；没有原话为据的命题与原话不符，是推理错了，不是需求矛盾",
+                    )
+                )
+                continue
+            group = [pid, *others]
+            grounds = {q: _grounded_side(props[q], requirement) for q in group if q in props}
+            if not others or bad:
+                problems.append(
+                    (
+                        pid,
+                        f"{pid}：{CONFLICT} 之后要列出与它矛盾的其他通过检查的命题编号"
+                        + (f"，{bad[0]} 不是" if bad else ""),
+                    )
+                )
+            elif not reason:
+                problems.append((pid, f"{pid}：理由不能为空，要写出矛盾在哪里"))
+            elif any(g is None for g in grounds.values()):
+                q = next(q for q, g in grounds.items() if g is None)
+                problems.append(
+                    (
+                        pid,
+                        f"{pid}：{q} 的依据中没有需求原文的逐字引文；没有原话为据的命题与原话不符，是推理错了，不是需求矛盾",
+                    )
+                )
+            elif len({tuple(g) for g in grounds.values()}) == 1:
+                problems.append((pid, f"{pid}：矛盾的各方引用了同样的原话，不是需求自相矛盾"))
+            else:
+                marks.append(
+                    {
+                        "id": pid,
+                        "mark": mark,
+                        "with": others,
+                        "reason": reason,
+                        **({"dropped": dropped} if dropped else {}),
+                    }
+                )
+        else:
+            problems.append((pid, f"{pid}：标记只能是 {C.UNSTATED} 或 {CONFLICT}"))
+    return marks, problems
+
+
+def _apply_review(run: Path, marks: list[dict]) -> None:
+    """Write the marks into propositions.json; a mark already there stays (细则 7.5)."""
+    data = S.read_json(run / "propositions.json")
+    by_id = {p["id"]: p for p in data["propositions"] if not p["problems"]}
+    parent = {pid: pid for pid in by_id}
+
+    def root(x: str) -> str:
+        while parent[x] != x:
+            x = parent[x]
+        return x
+
+    for m in marks:
+        p = by_id[m["id"]]
+        p.setdefault("review", []).append({k: m[k] for k in ("mark", "with", "reason") if k in m})
+        if m["mark"] == C.UNSTATED:
+            if not p.get("unstated"):
+                p["unstated"], p["unstated_by"] = True, "review"
+                p["basis"] += f"（复查：{C.UNSTATED}{m['reason']}）"
+            continue
+        for q in m["with"]:
+            parent[root(q)] = root(m["id"])
+            by_id[q].setdefault("review", []).append({"mark": m["mark"], "with": [m["id"]], "reason": m["reason"]})
+    for p in by_id.values():  # earlier groups are kept: their members are joined first
+        for q in p.get("conflict", []):
+            parent[root(q)] = root(p["id"])
+    groups: dict[str, set] = {}
+    for pid in by_id:
+        groups.setdefault(root(pid), set()).add(pid)
+    for members in groups.values():
+        if len(members) > 1:
+            for q in members:
+                by_id[q]["conflict"] = sorted(members - {q}, key=_num_id)
+    S.write_json(run / "propositions.json", data)
+
+
+def _num_id(pid: str) -> int:
+    return int(pid[1:]) if pid[1:].isdigit() else 10**9
+
+
+def _same(m: dict) -> str:
+    return json.dumps([m["id"], m["mark"], sorted(m.get("with", []))], ensure_ascii=False)
+
+
+def review_check(state: dict, answer: str | None, attempt: int) -> tuple[dict, str | None]:
+    """细则 7.5: check the review's marks; the bad lines go back once, and only they are taken from the rewrite."""
+    run = Path(state["run"])
+    check_violations(state)
+    earlier = state.pop("review_marks", None) or []
+    redo = set(state.pop("review_redo_ids", None) or [])
+    if answer is None:  # 细则 4.8
+        _note(
+            state, f"复查：{NO_ANSWER}，" + ("不合格的行被丢弃" if attempt == 2 else "按没有标记处理") + "（细则 7.5）"
+        )
+        marks = earlier
+    else:
+        S.write_text(run / ("review.txt" if attempt == 1 else "review-revised.txt"), answer)
+        props = {p["id"]: p for p in _accepted(run)}
+        requirement = (run / "requirement.txt").read_text(encoding="utf-8")
+        marks, problems = parse_review(answer, props, requirement)
+        if attempt == 2:
+            # Only the lines sent back are taken from the rewrite, so it is not another round of review.
+            marks = [m for m in marks if m["id"] in redo]
+            problems = [(pid, why) for pid, why in problems if pid in redo]
+        elif problems:
+            state["review_marks"] = marks
+            state["review_redo_ids"] = sorted({pid for pid, _ in problems})
+            return state, prompt(
+                "review_fix",
+                ERRORS=_bullets([why for _, why in problems]),
+                PREVIOUS=answer,
+                TASK=review_prompt(state) or "",
+            )
+        if problems:
+            _note(state, "复查中不合格的标记被丢弃：" + "；".join(why for _, why in problems[:5]) + "（细则 7.5）")
+        marks = earlier + marks
+        for m in marks:
+            if m.get("dropped"):
+                _note(state, f"复查：{m['id']} 的需求矛盾中去掉了没有原话为据的 {'、'.join(m['dropped'])}（细则 7.5）")
+    unique = list({_same(m): m for m in marks}.values())
+    if unique:
+        _apply_review(run, unique)
+        _note(state, f"复查标记了 {len(unique)} 项（细则 7.5）")
+    # 细则 5.2: propositions.json is frozen again after the review.
+    state["digests"] = S.record_digests(run, "propositions", state.get("digests"))
+    return state, None
 
 
 # ---------------------------------------------------------------------------------------------------

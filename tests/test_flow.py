@@ -211,12 +211,23 @@ def test_conclusions(home, tmp_path, light_align):
         "stopped": None,
         "stats": {"submitted": 4, "discarded": 3},
         "results": {"R1": {"result": "通过"}},
+        "accepted": [{"id": "R1", "class": "时序"}],
     }
     assert RP.conclusion(data, 0.5)[0] == RP.NO_CONCLUSION
     assert RP.conclusion({**data, "results": {}}, 0.5)[0] == RP.NO_CONCLUSION
     ok = {**data, "stats": {"submitted": 4, "discarded": 1}, "results": {"R1": {"result": "推定为假"}}}
     assert RP.conclusion(ok, 0.5)[0] == RP.PASSED
     assert RP.conclusion({**ok, "invalid": ["x"]}, 0.5)[0] == RP.INVALID
+    # 细则 14.2: only structure, or only what a person has to confirm, left to count: no certificate.
+    two = {"R1": {"result": "通过"}, "R2": {"result": "通过"}}
+    structure = [{"id": "R1", "class": "结构"}, {"id": "R2", "class": "具体事实", "unstated": True}]
+    only = {**ok, "results": two, "accepted": structure}
+    assert RP.conclusion(only, 0.5)[0] == RP.NO_CONCLUSION
+    behaviour = [*structure, {"id": "R3", "class": "时序"}]
+    tested = {**only, "results": {**two, "R3": {"result": "推定为真"}}, "accepted": behaviour}
+    assert RP.conclusion(tested, 0.5)[0] == RP.PASSED
+    vacuous = {**tested, "results": {**two, "R3": {"result": "推定为真", "vacuous": True}}}
+    assert RP.conclusion(vacuous, 0.5)[0] == RP.NO_CONCLUSION  # 细则 13.7: never tested
 
 
 def test_algorithm_lines_annotated():

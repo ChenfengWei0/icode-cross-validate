@@ -30,7 +30,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 REPO_IN_BOX = "/cv-repo"
-ROUND_SECONDS = 9000
+ROUND_SECONDS = 21600  # the C snake with verify checks did not finish alignment and checking in 2.5 hours
 REPLAY_SECONDS = 3600
 BOX_MEMORY_MB = 5120  # the local model holds 36 GB of 42
 FOUND = {"失败（检查）", "确定违反"}
@@ -93,13 +93,16 @@ def prepare(round_dir: Path, model_yaml: Path, seed: Path | None = None) -> Path
 def run_workflow(round_dir: Path, home: Path, goal: str) -> None:
     command = ["icode", "workflow", "run", "cross-validate", "--trust", "--json", "--input", goal]
     with open(round_dir / "run.json", "w") as out, open(round_dir / "run.err", "w") as err:
-        subprocess.run(
-            box(round_dir / "proj", round_dir, home, *command),
-            stdout=out,
-            stderr=err,
-            timeout=ROUND_SECONDS,
-            check=False,
-        )
+        try:
+            subprocess.run(
+                box(round_dir / "proj", round_dir, home, *command),
+                stdout=out,
+                stderr=err,
+                timeout=ROUND_SECONDS,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            err.write("超时\n")
 
 
 def run_accumulation(round_dir: Path, home: Path, goal: str) -> None:
@@ -259,14 +262,16 @@ def evaluate_round(round_dir: Path, model_yaml: Path, example: Path, workers: in
     run = run_dir_of(home)
     report_path = run / "report.json" if run else None
     report = json.loads(report_path.read_text(encoding="utf-8")) if report_path and report_path.exists() else None
+    timed_out = "超时" in (round_dir / "run.err").read_text(encoding="utf-8", errors="replace").splitlines()
+    note = f"主流程超过 {ROUND_SECONDS // 3600} 小时被停下" if timed_out and report is None else None
     code = round_dir / "proj" / mut.TARGET
     frozen = run / "align" / "checks.frozen.json" if run else None
     if not (code.exists() and frozen and frozen.exists()):
-        return summarize_round(report, {}, "没有代码或没有冻结的检查，不重放")
+        return summarize_round(report, {}, note or "没有代码或没有冻结的检查，不重放")
     mutants = mut.prepare(code.read_text(encoding="utf-8"))
     if mutants is None:
-        return summarize_round(report, {}, "变异版本无法从这一轮的代码生成，不重放")
-    return summarize_round(report, replay_all(round_dir, home, run, code, mutants, workers))
+        return summarize_round(report, {}, note or "变异版本无法从这一轮的代码生成，不重放")
+    return summarize_round(report, replay_all(round_dir, home, run, code, mutants, workers), note)
 
 
 def main() -> int:

@@ -29,6 +29,8 @@ def snake_agents(calls):
             return (SNAKE / "split.json").read_text(encoding="utf-8")
         if node == "propose":
             return (SNAKE / "subtask.txt").read_text(encoding="utf-8")
+        if node == "review":
+            return "无"
         if node == "align":
             align = Path(re.search(r"你的目录：`([^`]+)`", prompt).group(1))
             for f in (SNAKE / "align").iterdir():
@@ -43,7 +45,7 @@ def test_graph_builds(home):
     """I-WF-1 I-WF-3 细则 4.4 the graph builds: unique names, joins, no cycle, everything reachable."""
     wf = load(home).workflow
     names = set(wf.b.nodes)
-    for n in ("intake", "implement", "consolidate", "split", "propose", "align", "run_checks", "report"):
+    for n in ("intake", "implement", "consolidate", "split", "propose", "review", "align", "run_checks", "report"):
         assert n in names
     assert wf.b.outputs == ["report"]
     assert wf.b.nodes["run_checks"]["timeout"] is None
@@ -57,14 +59,47 @@ def test_goal_mode_snake(home, tmp_path, monkeypatch):
     calls = []
     outputs = load(home).workflow.run("实现贪吃蛇。", snake_agents(calls))
     report = outputs[0].text
-    assert [c[0] for c in calls] == ["implement", "split", "propose", "align"]
-    assert [c[1] for c in calls] == ["Code", "cv-subtask", "cv-subtask", "cv-align"]
+    assert [c[0] for c in calls] == ["implement", "split", "propose", "review", "align"]
+    assert [c[1] for c in calls] == ["Code", "cv-subtask", "cv-subtask", "cv-subtask", "cv-align"]
     assert "| R5 | 推理 | 确定违反 |" in report and "**比对未通过**" in report
     # 细则 4.6, D-4: the subtask prompts hold the requirement, never W or the code.
-    for _node, _, prompt in calls[1:3]:
+    for _node, _, prompt in calls[1:4]:
         assert str(w) not in prompt and "snake.py" not in prompt
     # Only the checks' own byproducts (Python caches from importing snake.py) appear in W.
     assert {p.name for p in w.iterdir()} <= {"snake.py", "__pycache__"}, "细则 3.1 nothing is written into the project"
+
+
+def test_review_marks_reach_the_conclusion(home, tmp_path, monkeypatch):
+    """细则 7.5 13.8 14.2 a review mark takes a failing proposition out of the conclusion and lists it for a person."""
+    w = tmp_path / "w"
+    shutil.copytree(SNAKE / "buggy", w, ignore=shutil.ignore_patterns("__pycache__"))
+    monkeypatch.chdir(w)
+    calls = []
+    base = snake_agents(calls)
+    seen = {}
+
+    def answer(node, profile, prompt):
+        if node == "review":
+            calls.append((node, profile, prompt))
+            seen["prompt"] = prompt
+            return (
+                "R5  〔需求未说明〕  需求没说撞到自身之后怎样，可以结束，也可以继续，这里按结束处理\n"
+                "R99  〔需求未说明〕  不存在的编号\nR6  〔需求矛盾〕  R5  示意"
+            )
+        if node == "review_redo":
+            calls.append((node, profile, prompt))
+            assert "R99" in prompt and "不是通过检查的命题编号" in prompt and "R6" in prompt
+            # Only the lines sent back count: a new mark on R7 here is not taken.
+            return "R7  〔需求未说明〕  需求没说，可以这样，也可以那样，这里按这样处理"
+        return base(node, profile, prompt)
+
+    report = load(home).workflow.run("实现贪吃蛇。", answer)[0].text
+    assert [c[0] for c in calls] == ["implement", "split", "propose", "review", "review_redo", "align"]
+    assert "实现贪吃蛇" in seen["prompt"] and str(w) not in seen["prompt"] and "snake.py" not in seen["prompt"]
+    # R5 leaves the conclusion; R2 and R10 still fail it. R6's conflict has no quote; R7 was not sent back.
+    assert "| R5 | 推理（需求未说明） | 确定违反 |" in report and "## 复查标记" in report
+    assert "R7（需求未说明）" not in report and "需求矛盾 R" not in report and "（需求矛盾" not in report
+    assert "**比对未通过**" in report and "不算复查标记时的结论：比对未通过" in report
 
 
 def _calling_tools(answer, w, misbehave):
@@ -93,7 +128,7 @@ def test_tool_call_voids_answer_and_reruns(home, tmp_path, monkeypatch):
     report = load(home).workflow.run("实现贪吃蛇。", agents)[0].text
     assert "**比对未通过**" in report and "**无效**" not in report
     assert "子任务节点 propose 的回答期间调用了工具 load_skill" in report
-    assert [c[0] for c in calls] == ["implement", "split", "propose", "propose", "align"]
+    assert [c[0] for c in calls] == ["implement", "split", "propose", "propose", "review", "align"]
     first, rerun = calls[2][2], calls[3][2]
     assert first == rerun, "the rerun gets the same task"
 
@@ -184,7 +219,7 @@ def test_accumulation_mode(home, tmp_path, monkeypatch):
         return agents(node, profile, prompt)
 
     report = load(home).workflow.run(f"@cv-run:{run}", answer)[0].text
-    assert [c[0] for c in calls] == ["consolidate", "split", "propose", "align"]
+    assert [c[0] for c in calls] == ["consolidate", "split", "propose", "review", "align"]
     assert "M1：「实现贪吃蛇。」" in report and "非需求：M2" in report and "**比对通过**" in report
 
 
@@ -231,6 +266,7 @@ def test_revision_paths(home, tmp_path, monkeypatch):
         "split_redo",
         "propose",
         "propose_redo",
+        "review",
         "align",
         "align_redo",
     ]

@@ -736,6 +736,23 @@ def test_preflight_reports_the_format_and_nothing_else(decls, tmp_path):
     assert list(tmp_path.glob("*.jsonl")) == []
 
 
+def test_preflight_reports_a_scenario_never_reached(decls, tmp_path):
+    """细则 11.7 a 从 S 出发 proposition whose CV_RUN=0 trace misses the sentence goes back; a reached one does not."""
+    tree, pattern = G.parse_sentence("从 蛇的长度 等于 3 出发，依次执行 右，之后 游戏 结束", decls)
+    p = {"R1": {"id": "R1", "tree": tree, "pattern": pattern, "class": F.classify(tree)}}
+
+    def problems(states):
+        command = _trace_script(tmp_path, "s.py", states)
+        check = {"proposition": "R1", "kind": "trace", "command": command, "timeout": 30, "runs": 5}
+        return RUN.preflight(tmp_path, tmp_path, p, [check], ENT, LIMITS)
+
+    left = [{"值": {"长度(蛇)": 3, "结束(游戏)": False}, "动作": "左"}, {"值": {"长度(蛇)": 3, "结束(游戏)": False}}]
+    assert any("R1" in x and "动作序列与句子不符" in x for x in problems(left))
+    # Reached with the consequent false: a verdict, not said.
+    right = [{"值": {"长度(蛇)": 3, "结束(游戏)": False}, "动作": "右"}, {"值": {"长度(蛇)": 3, "结束(游戏)": False}}]
+    assert problems(right) == []
+
+
 def test_preflight_goes_back_once(home, tmp_path, light_align, monkeypatch):
     """细则 11.7 trace problems take the format-correction path once; trouble in the trial is skipped."""
     state, _ = goal_run(home, tmp_path)
@@ -950,7 +967,8 @@ def test_what_the_requirement_leaves_open_is_for_a_person(decls, tmp_path):
     assert out["R1"]["result"] == M.CHECK_FAILED and out["R1"]["unstated"] is True
     assert out["R9"]["result"] == M.PASSED and out["R9"]["unstated_inputs"][0]["result"] == M.CHECK_FAILED
     assert "unstated" not in out["R9"] and "unstated_inputs" not in out["R5"]
-    data = {"results": out, "stats": {"submitted": 3, "discarded": 0}}
+    behaviour = [{"id": pid, "class": "具体事实", **p[pid]} for pid in ("R1", "R5", "R9")]
+    data = {"results": out, "stats": {"submitted": 3, "discarded": 0}, "accepted": behaviour}
     assert REPORT.conclusion(data, 0.5)[0] == REPORT.PASSED
 
     accepted = [

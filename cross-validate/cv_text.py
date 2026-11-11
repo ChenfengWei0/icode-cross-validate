@@ -87,6 +87,44 @@ def check_split(answer: str, requirement: str) -> tuple[list[dict], list[str]]:
     return sentences, errors
 
 
+def _lead(text: str) -> str:
+    words = text.split()
+    return words[0] if words else ""
+
+
+def merge_examples(sentences: list[dict], requirement: str, boundaries: list[int] | None = None) -> list[dict]:
+    """细则 6.4: an example's input and the output that follows it become one sentence.
+
+    A sentence joins the one before it only if both are labelled exactly 示例, only whitespace lies
+    between them, no entry boundary of R lies between them (accumulation mode), and it does not start
+    the way a group in this run of examples started: `>>> f(1)` / `3` / `>>> f(2)` / `4` gives two
+    groups, so the input of one example can never be quoted together with the output of another.
+    """
+    cuts = boundaries or []
+    out: list[dict] = []
+    starts: set[str] = set()  # how the groups of the current run of examples began
+    for s in sentences:
+        last = out[-1] if out else None
+        adjacent = (  # the run of examples goes on
+            last is not None
+            and last["labels"] == ["示例"]
+            and s["labels"] == ["示例"]
+            and not requirement[last["end"] : s["start"]].strip()
+        )
+        crossing = last is not None and any(last["end"] <= c <= s["start"] for c in cuts)
+        if adjacent and not crossing and _lead(s["text"]) not in starts:
+            last["end"] = s["end"]
+            last["text"] = requirement[last["start"] : last["end"]]
+            continue
+        if not adjacent:
+            starts = set()
+        out.append(dict(s))
+        starts.add(_lead(s["text"]))
+    for k, s in enumerate(out, 1):
+        s["id"] = f"S{k}"
+    return out
+
+
 def fallback_split(requirement: str) -> list[dict]:
     """细则 6.1, 17.1: split at sentence-final punctuation; every sentence is labelled 无."""
     out: list[dict] = []

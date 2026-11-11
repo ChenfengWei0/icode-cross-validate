@@ -15,22 +15,67 @@ INVALID, NO_CONCLUSION, FAILED, PASSED = "无效", "无结论", "比对未通过
 ASCII_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{1,}")
 
 
-def conclusion(data: dict, max_discard_ratio: float) -> tuple[str, str]:
-    """细则 14.2: event A of chapter 2, or why there is none."""
+def _without_review(p: dict) -> dict:
+    """细则 17.12: the proposition as it was before the review (细则 7.5) marked it."""
+    q = {k: v for k, v in p.items() if k != "conflict"}
+    if q.get("unstated_by") == "review":
+        q.pop("unstated", None)
+    return q
+
+
+def _failing(results: dict, accepted: list[dict]) -> list[str]:
+    """细则 13.8, 14.2, 7.5: counted failures; a conflict group fails only when every member fails."""
+    by_id = {p["id"]: p for p in accepted}
+    failed = []
+    for p in accepted:
+        r = results.get(p["id"])
+        if not r or r["result"] not in M.FAILING or p.get("unstated"):
+            continue
+        group = [p["id"], *p.get("conflict", [])]
+        if all(results.get(q, {}).get("result") in M.FAILING and not by_id.get(q, {}).get("unstated") for q in group):
+            failed.append(p["id"])
+    return failed
+
+
+def conclusion(
+    data: dict, max_discard_ratio: float, max_confirm_ratio: float = 0.5, ignore_review: bool = False
+) -> tuple[str, str]:
+    """细则 14.2: event A of chapter 2, or why there is none. ignore_review: as if no review mark were made."""
     if data.get("invalid"):
         return INVALID, "；".join(data["invalid"])
     if data.get("stopped"):
         return NO_CONCLUSION, data["stopped"]
     submitted = data["stats"]["submitted"]
-    checked = len(data["results"])
-    if checked == 0:
+    results = data["results"]
+    if len(results) == 0:
         return NO_CONCLUSION, "没有命题进入检查"
     if submitted and data["stats"]["discarded"] / submitted > max_discard_ratio:
         return NO_CONCLUSION, f"被丢弃的命题超过提交总数的 {max_discard_ratio:.0%}"
-    # 细则 14.2, 13.8: a reading the requirement does not decide is for a person to confirm.
-    if any(r["result"] in M.FAILING and not r.get("unstated") for r in data["results"].values()):
-        return FAILED, "至少一条命题的结果是失败或确定违反"
-    return PASSED, "没有命题失败或被确定违反"
+    accepted = [_without_review(p) for p in data["accepted"]] if ignore_review else data["accepted"]
+    # 细则 14.2: an error found is reported even when the rest would give no conclusion.
+    if _failing(results, accepted):
+        return FAILED, "至少一条计入结论的命题的结果是失败或确定违反"
+    marked = [p for p in accepted if _for_a_person(p)]
+    if accepted and len(marked) / len(accepted) > max_confirm_ratio:
+        return NO_CONCLUSION, f"标了需求未说明或需求矛盾的命题超过通过检查的命题的 {max_confirm_ratio:.0%}"
+    # 细则 14.2: structure alone, or a check that never met its antecedent, finds no error in behaviour
+    # (约束 1), so it issues no certificate. A conflict group is counted (细则 7.5).
+    counted = [
+        p["id"]
+        for p in accepted
+        if p["id"] in results
+        and not p.get("unstated")
+        and p.get("class") != "结构"
+        and not results[p["id"]].get("vacuous")
+    ]
+    if not counted:
+        return NO_CONCLUSION, "计入结论的命题中没有一条真正检验过行为的非结构命题"
+    return PASSED, "没有计入结论的命题失败或被确定违反"
+
+
+def _for_a_person(p: dict) -> bool:
+    """细则 13.8: marked unstated (细则 7.3, 7.5) or in conflict with another proposition (细则 7.5)."""
+    return bool(p.get("unstated") or p.get("conflict"))
 
 
 def to_confirm(results: dict, accepted: list[dict]) -> list[str]:
@@ -43,6 +88,13 @@ def to_confirm(results: dict, accepted: list[dict]) -> list[str]:
             detail = _detail(r)
             lines.append(
                 f"{p['id']}（需求未说明）{p['sentence']}：{r['result']}。依据：{_plain(p['basis'])}"
+                + (f"；{detail}" if detail else "")
+            )
+        if p.get("conflict") and not p.get("unstated") and r.get("result") in found:
+            detail = _detail(r)
+            why = "；".join(_plain(x["reason"], 120) for x in p.get("review", []) if x.get("mark") == "〔需求矛盾〕")
+            lines.append(
+                f"{p['id']}（需求矛盾，与 {'、'.join(p['conflict'])}）{p['sentence']}：{r['result']}。复查：{why}"
                 + (f"；{detail}" if detail else "")
             )
         for c in r.get("unstated_inputs", []):
@@ -68,7 +120,8 @@ def _rows(props: list[dict], results: dict, forms: dict) -> list[dict]:
                 "ids": [p["id"]],
                 "source": p["source"]
                 + ("（未套用句式）" if p.get("pattern") == "未套用句式" else "")
-                + ("（需求未说明）" if p.get("unstated") else ""),
+                + ("（需求未说明）" if p.get("unstated") else "")
+                + ("（需求矛盾）" if p.get("conflict") else ""),
                 "result": r.get("result", "未检查"),
                 "form": "、".join(forms.get(p["id"], [])) or "—",
                 "liveness": p.get("liveness", False),
@@ -123,6 +176,42 @@ def _ids(ids: list[str]) -> str:
     return ids[0] if len(ids) == 1 else f"{ids[0]} 至 {ids[-1]}"
 
 
+def _groups(accepted: list[dict]) -> list[list[str]]:
+    """细则 7.5: the conflict groups, each sorted by id."""
+    seen, groups = set(), []
+    for p in accepted:
+        if p.get("conflict") and p["id"] not in seen:
+            group = sorted({p["id"], *p["conflict"]}, key=_num)
+            seen.update(group)
+            groups.append(group)
+    return groups
+
+
+def review_lines(results: dict, accepted: list[dict]) -> list[str]:
+    """细则 14.1: every review mark with its reason; each conflict group with every member's result."""
+    lines = []
+    for p in sorted(accepted, key=lambda p: _num(p["id"])):
+        if p.get("unstated_by") == "review":
+            why = next((x["reason"] for x in p.get("review", []) if x.get("mark") == "〔需求未说明〕"), "")
+            result = results.get(p["id"], {}).get("result", "未检查")
+            lines.append(f"{p['id']}（需求未说明）{p['sentence']}：{result}。复查：{_plain(why, 200)}")
+    by_id = {p["id"]: p for p in accepted}
+    for group in _groups(accepted):
+        sides = "；".join(
+            f"{q} {by_id[q]['sentence']}：{results.get(q, {}).get('result', '未检查')}" for q in group if q in by_id
+        )
+        why = "；".join(
+            dict.fromkeys(
+                _plain(x["reason"], 120)
+                for q in group
+                for x in by_id.get(q, {}).get("review", [])
+                if x.get("mark") == "〔需求矛盾〕"
+            )
+        )
+        lines.append(f"需求矛盾 {'、'.join(group)}：{sides}。复查：{why}")
+    return lines
+
+
 def build(run: Path, extra: dict, config: dict) -> dict:
     """Collect everything the report needs from the run directory."""
     run = Path(run)
@@ -148,6 +237,8 @@ def build(run: Path, extra: dict, config: dict) -> dict:
         "by_result": {},
         "vacuous": 0,
         "unstated": sum(bool(p.get("unstated")) for p in accepted),
+        "unstated_by_review": sum(p.get("unstated_by") == "review" for p in accepted),
+        "conflict": len(_groups(accepted)),
         "verified": len(
             {
                 c["proposition"]
@@ -162,6 +253,9 @@ def build(run: Path, extra: dict, config: dict) -> dict:
         stats["by_result"][r["result"]] = stats["by_result"].get(r["result"], 0) + 1
         stats["vacuous"] += 1 if r.get("vacuous") else 0
         stats["unstated_inputs"] += len(r.get("unstated_inputs", []))
+    stats["counted"] = sum(
+        1 for p in accepted if p["id"] in prop_results and not p.get("unstated") and p.get("class") != "结构"
+    )
     data = {
         "title": TITLE,
         "run": run.name,
@@ -181,8 +275,11 @@ def build(run: Path, extra: dict, config: dict) -> dict:
         "w_changes": extra.get("w_changes", {}),
         "suspect_names": extra.get("suspect_names", []),
         "to_confirm": to_confirm(prop_results, accepted),
+        "review": review_lines(prop_results, accepted),
     }
-    data["conclusion"], data["conclusion_reason"] = conclusion(data, config["max_discard_ratio"])
+    ratios = (config["max_discard_ratio"], config.get("max_confirm_ratio", 0.5))
+    data["conclusion"], data["conclusion_reason"] = conclusion(data, *ratios)
+    data["conclusion_without_review"] = conclusion(data, *ratios, ignore_review=True)[0]  # 细则 17.12
     return data
 
 
@@ -252,6 +349,13 @@ def render(data: dict) -> str:
         )
         out.extend(f"- {line}" for line in data["to_confirm"])
         out.append("")
+    if data.get("review"):
+        out.append("## 复查标记")
+        out.append(
+            "子任务在复查中标出的需求未说明和需求矛盾（细则 7.5）。需求矛盾的一组，组内全部失败才计入比对未通过。"
+        )
+        out.extend(f"- {line}" for line in data["review"])
+        out.append("")
     if data["bindings"]:
         out.append("## 绑定")
         for name, what in data["bindings"].items():
@@ -271,7 +375,14 @@ def render(data: dict) -> str:
     if s.get("verified"):
         out.append(f"- 由验证器在给定步数内考察了全部输入的命题 {s['verified']} 条（细则 11.11）")
     if s.get("unstated"):
-        out.append(f"- 其中需求未说明 {s['unstated']} 条，结果不计入比对结论（细则 13.8）")
+        by_review = f"（其中复查补标 {s['unstated_by_review']} 条）" if s.get("unstated_by_review") else ""
+        out.append(f"- 其中需求未说明 {s['unstated']} 条{by_review}，结果不计入比对结论（细则 13.8）")
+    if s.get("conflict"):
+        out.append(f"- 需求矛盾 {s['conflict']} 组，每组全部失败才计入比对未通过（细则 7.5）")
+    if "counted" in s:
+        out.append(f"- 计入结论的命题 {s['counted']} 条")
+    if data.get("conclusion_without_review"):
+        out.append(f"- 不算复查标记时的结论：{data['conclusion_without_review']}（细则 17.12）")
     if s.get("unstated_inputs"):
         out.append(f"- 超出需求的输入的检查 {s['unstated_inputs']} 项，结果不计入比对结论（细则 13.8）")
     out.append("")

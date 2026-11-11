@@ -181,3 +181,30 @@ def test_trace_format(tmp_path):
         except M.AlignError:
             continue
         raise AssertionError(bad)
+
+
+EXAMPLE_TRACER = """
+import json, os
+i = int(os.environ["CV_RUN"])
+# Run 0 follows the example; run 1 has the same action names with other arguments, so the count differs.
+end = 3 if i == 0 else 4
+states = [{"值": {"长度(蛇)": 3}, "动作": "右"}, {"值": {"长度(蛇)": end}, "动作": None}]
+with open(os.environ["CV_TRACE"], "w") as f:
+    for s in states:
+        f.write(json.dumps(s, ensure_ascii=False) + "\\n")
+"""
+
+
+def test_translated_scenario_only_on_run_zero(decls, tmp_path):
+    """细则 12.5 a translated 从 S 出发 (an example) is judged on CV_RUN=0 only; a reasoned one on every run."""
+    run, w = tmp_path / "run", tmp_path / "w"
+    (run / "align").mkdir(parents=True)
+    w.mkdir()
+    tree, pattern = G.parse_sentence("从 蛇的长度 等于 3 出发，依次执行 右，之后 蛇的长度 等于 3", decls)
+    cmd = write(tmp_path / "ex.py", EXAMPLE_TRACER)
+    check = {"proposition": "R1", "kind": "trace", "command": cmd, "runs": 2}
+    for source, want in (("翻译", M.PASSED), ("推理", M.CHECK_FAILED)):
+        p = {"R1": {"id": "R1", "tree": tree, "pattern": pattern, "class": "具体事实", "source": source}}
+        out = RUN.run_checks(run, w, p, frozen_for([check]), set(), LIMITS)
+        assert out["propositions"]["R1"]["result"] == want, source
+        assert len(out["checks"][0]["runs_detail"]) == (1 if source == "翻译" else 2)

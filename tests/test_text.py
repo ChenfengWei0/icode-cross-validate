@@ -91,3 +91,38 @@ def test_propositions():
     assert props[3]["依据"] == "〔动作的效果〕吃到食物是蛇变长的方式"
     p, _ = T.parse_propositions(["编号  R1", "来源  推理", "颜色  红"])
     assert p[0]["problems"] == ["无法识别的行：颜色  红"]
+
+
+def test_examples_are_not_split():
+    """细则 6.4 adjacent 示例 sentences are merged into one verbatim fragment; others stay as they are."""
+    req = "def f(x):\n    >>> f([1, 2])\n    3\n    Return the sum.\n例如 f([2]) 得到 2。"
+    parts = [
+        ("def f(x):", ["接口规定"]),
+        (">>> f([1, 2])", ["示例"]),
+        ("3", ["示例"]),
+        ("Return the sum.", ["规则"]),
+        ("例如 f([2]) 得到 2。", ["示例"]),
+    ]
+    answer = json.dumps([{"id": f"S{k}", "text": t, "labels": lb} for k, (t, lb) in enumerate(parts, 1)])
+    sentences, errors = T.check_split(answer, req)
+    assert not errors
+    merged = T.merge_examples(sentences, req)
+    assert [s["id"] for s in merged] == ["S1", "S2", "S3", "S4"]
+    assert merged[1]["text"] == ">>> f([1, 2])\n    3" and merged[1]["labels"] == ["示例"]
+    assert req[merged[1]["start"] : merged[1]["end"]] == merged[1]["text"]
+    assert merged[3]["text"] == "例如 f([2]) 得到 2。"  # not adjacent to the first example: kept apart
+
+
+def test_two_examples_in_a_row_stay_two():
+    """细则 6.4 the input of one example is never merged with the output of the next; labels must match;
+    an entry boundary is never crossed."""
+    req = ">>> f(1)\n3\n>>> f(2)\n4\nf(3) 总是正数\n5"
+    parts = [(">>> f(1)", ["示例"]), ("3", ["示例"]), (">>> f(2)", ["示例"]), ("4", ["示例"])]
+    parts += [("f(3) 总是正数", ["示例", "规则"]), ("5", ["示例"])]
+    answer = json.dumps([{"id": f"S{k}", "text": t, "labels": lb} for k, (t, lb) in enumerate(parts, 1)])
+    sentences, errors = T.check_split(answer, req)
+    assert not errors
+    merged = T.merge_examples(sentences, req)
+    assert [s["text"] for s in merged] == [">>> f(1)\n3", ">>> f(2)\n4", "f(3) 总是正数", "5"]
+    cut = req.index("3")  # an entry starts at the output line
+    assert [s["text"] for s in T.merge_examples(sentences, req, [cut])][:2] == [">>> f(1)", "3"]
