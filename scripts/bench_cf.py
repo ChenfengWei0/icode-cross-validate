@@ -101,6 +101,7 @@ def _box(d: Path, args: list[str], stdin=None, timeout: float = 60):
 
 def grade(problem_dir: Path, program: str, limit: float = 20) -> dict:
     verdicts: dict[str, int] = {}
+    first_fail = None
     for case in sorted((problem_dir / "tests").glob("*.in")):
         with tempfile.TemporaryDirectory(prefix="cfg-") as tmp:
             d = Path(tmp)
@@ -120,12 +121,15 @@ def grade(problem_dir: Path, program: str, limit: float = 20) -> dict:
                 except (ValueError, IndexError):
                     v = "CHECKER_ERR"
         verdicts[v] = verdicts.get(v, 0) + 1
-        if v in ("WA", "RE"):
-            break  # one logic failure decides
+        if v != "OK" and first_fail is None:
+            first_fail = case.name
+        if v in ("WA", "RE") or verdicts.get("TLE", 0) >= 2:
+            break  # one logic failure decides; two timeouts settle the speed question
     return {
         "correct": set(verdicts) == {"OK"},
         "logic_correct": not ({"WA", "RE", "CHECKER_ERR"} & set(verdicts)),
         "verdicts": verdicts,
+        "first_fail": first_fail,
     }
 
 
@@ -174,35 +178,163 @@ def run_problem(pid: str, a, s: IO.Settings) -> None:
 # ---------------------------------------------------------------------------------------------------
 
 
+def _block(rs: list[dict], key: str) -> dict:
+    correct = [r["truth"][key] for r in rs]
+    cert = [r for r in rs if r["conclusion"] == IO.PASS]
+    cc = sum(r["truth"][key] for r in cert)
+    wrong = [r for r in rs if not r["truth"][key]]
+    right = [r for r in rs if r["truth"][key]]
+    return {
+        "n": len(rs),
+        "correct": sum(correct),
+        "p_correct": round(sum(correct) / len(rs), 3) if rs else None,
+        "certified": len(cert),
+        "certified_correct": cc,
+        "precision": round(cc / len(cert), 3) if cert else None,
+        "false_alarm": round(sum(r["conclusion"] == IO.FAIL for r in right) / len(right), 3) if right else None,
+        "k_caught_wrong": round(sum(r["conclusion"] == IO.FAIL for r in wrong) / len(wrong), 3) if wrong else None,
+        "no_conclusion": sum(r["conclusion"] == IO.NONE for r in rs),
+    }
+
+
+def _bootstrap(rows: list[dict], key: str, n: int = 2000) -> dict:
+    """95% intervals, resampling problems (samples of one problem share a check module)."""
+    import random
+
+    by: dict[str, list[dict]] = {}
+    for d in rows:
+        by.setdefault(d["pid"], []).append(d)
+    pids, rng, lift1, lift2, final = sorted(by), random.Random(0), [], [], []  # noqa: S311 (resampling, not secrets)
+    for _ in range(n):
+        pick = [d for p in (rng.choice(pids) for _ in pids) for d in by[p]]
+        first = [d["rounds"][0] for d in pick]
+        last = [d["rounds"][-1] for d in pick]
+        pm = sum(r["truth"][key] for r in first) / len(first)
+        for rs, out in ((first, lift1), (last, lift2)):
+            cert = [r for r in rs if r["conclusion"] == IO.PASS]
+            if cert:
+                out.append(sum(r["truth"][key] for r in cert) / len(cert) - pm)
+        final.append(sum(r["truth"][key] for r in last) / len(last) - pm)
+
+    def ci(xs):
+        xs = sorted(xs)
+        return [round(xs[int(0.025 * len(xs))], 3), round(xs[int(0.975 * len(xs)) - 1], 3)] if xs else None
+
+    return {
+        "precision_minus_pm_first": ci(lift1),
+        "precision_minus_pm_after_repair": ci(lift2),
+        "final_minus_pm": ci(final),
+    }
+
+
 def summary(out: Path, problems: list[str] | None) -> dict:
-    rows = []
-    for f in sorted(out.glob("*/s*.json")):
+    rows, empty = [], 0
+    for f in sorted(out.glob("*/s[0-9]*.json")):
         d = json.loads(f.read_text())
         if problems and d["pid"] not in problems:
             continue
+        if not d["rounds"][0]["program"].strip():
+            empty += 1  # the main task produced no code (C3): not a certificate question
+            continue
         rows.append(d)
-    n = len(rows)
-    if not n:
-        return {"samples": 0}
-    first = [d["rounds"][0] for d in rows]
-    last = [d["rounds"][-1] for d in rows]
-
-    def block(rs):
-        correct = [r["truth"]["correct"] for r in rs]
-        cert = [r for r in rs if r["conclusion"] == IO.PASS]
-        cc = sum(r["truth"]["correct"] for r in cert)
-        wrong = [r for r in rs if not r["truth"]["correct"]]
-        right = [r for r in rs if r["truth"]["correct"]]
-        return {"n": len(rs), "correct": sum(correct), "p_correct": round(sum(correct) / len(rs), 3),
-                "certified": len(cert), "certified_correct": cc,
-                "precision": round(cc / len(cert), 3) if cert else None,
-                "false_alarm": round(sum(r["conclusion"] == IO.FAIL for r in right) / len(right), 3) if right else None,
-                "caught_wrong_k": round(sum(r["conclusion"] == IO.FAIL for r in wrong) / len(wrong), 3) if wrong else None,
-                "no_conclusion": sum(r["conclusion"] == IO.NONE for r in rs)}  # fmt: skip
-
-    res = {"samples": n, "first_round": block(first), "after_repair": block(last),
-           "repaired": sum(len(d["rounds"]) > 1 for d in rows)}  # fmt: skip
+    if not rows:
+        return {"samples": 0, "no_code": empty}
+    res: dict = {"samples": len(rows), "problems": len({d["pid"] for d in rows}), "no_code": empty,
+                 "repaired": sum(len(d["rounds"]) > 1 for d in rows)}  # fmt: skip
+    for key in ("correct", "logic_correct"):
+        res[key] = {
+            "first_round": _block([d["rounds"][0] for d in rows], key),
+            "after_repair": _block([d["rounds"][-1] for d in rows], key),
+            "ci": _bootstrap(rows, key),
+        }
+    audited = []
+    for d in rows:
+        f = out / d["pid"] / f"audit-s{d['sample']}.json"
+        if f.exists():
+            v = json.loads(f.read_text())
+            audited.append({"sample": f"{d['pid']}#{d['sample']}", "kind": v["kind"], "verdict": v["verdict"]})
+            r0 = d["rounds"][0]
+            if v["kind"] == "alarm" and v["verdict"] == "INVALID":
+                r0["truth"] = {**r0["truth"], "audited": False}
+            elif v["kind"] == "escape" and v["verdict"] == "VALID":
+                r0["truth"] = {**r0["truth"], "audited": True}
+    for d in rows:
+        for r in d["rounds"]:
+            r["truth"].setdefault("audited", r["truth"]["correct"])
+    res["audited"] = {
+        "cases": audited,
+        "first_round": _block([d["rounds"][0] for d in rows], "audited"),
+        "ci": _bootstrap(rows, "audited"),
+    }
+    res["escaped"] = [f"{d['pid']}#{d['sample']}" for d in rows
+                      if d["rounds"][0]["conclusion"] == IO.PASS and not d["rounds"][0]["truth"]["correct"]]  # fmt: skip
+    res["false_alarms"] = [f"{d['pid']}#{d['sample']}" for d in rows
+                           if d["rounds"][0]["conclusion"] == IO.FAIL and d["rounds"][0]["truth"]["correct"]]  # fmt: skip
     return res
+
+
+AUDIT = """You are refereeing a disagreement about a competitive programming problem. Below are the problem
+statement, one input and the output a program printed for it. Decide, from the statement alone, whether this
+output is an acceptable answer for this input. Check every stated condition by explicit computation on this
+concrete case; when the statement allows several answers, any output meeting all stated conditions is
+acceptable. The first line of your answer must be exactly VALID or INVALID; then give your verification.
+
+# Statement
+
+{req}
+
+# Input
+
+```
+{inp}
+```
+
+# Output
+
+```
+{out}
+```
+"""
+
+
+def audit(a) -> None:
+    """C4: an outside referee re-judges every sample where the io mode and the hidden tests disagree."""
+    ref = asker(a.referee, 32000)
+    for f in sorted(Path(a.out).glob("*/s[0-9]*.json")):
+        d = json.loads(f.read_text())
+        r0 = d["rounds"][0]
+        if not r0["program"].strip() or (f.parent / f"audit-{f.name}").exists():
+            continue
+        alarm = r0["conclusion"] == IO.FAIL and r0["truth"]["correct"]
+        escape = r0["conclusion"] == IO.PASS and not r0["truth"]["correct"]
+        if not (alarm or escape):
+            continue
+        pdir = Path(a.data) / "problems" / d["pid"]
+        req, _ = requirement(json.loads((pdir / "problem.json").read_text()))
+        if alarm:
+            inp, out = r0["counterexample"]["input"], r0["counterexample"]["output"]
+        else:
+            name = r0["truth"].get("first_fail")
+            if not name or r0["truth"]["verdicts"].get("WA", 0) == 0:
+                continue  # crashes and timeouts need no referee
+            inp = (pdir / "tests" / name).read_text()
+            if len(inp) > 3000:
+                (f.parent / f"audit-{f.name}").write_text(json.dumps({"kind": "escape", "verdict": "too large"}))
+                continue
+            with tempfile.TemporaryDirectory(prefix="cfa-") as tmp:
+                t = Path(tmp)
+                (t / "sol.py").write_text(r0["program"])
+                (t / "in.txt").write_text(inp)
+                with open(t / "in.txt") as fin:
+                    _, raw = _box(t, ["/usr/bin/python3", "-I", "sol.py"], stdin=fin, timeout=20)
+            out = raw.decode(errors="replace")
+        answer = ref(AUDIT.format(req=req, inp=inp.rstrip(), out=out[:6000].rstrip()))
+        first = next((ln.strip() for ln in answer.splitlines() if ln.strip()), "")
+        verdict = "INVALID" if first.startswith("INVALID") else "VALID" if first.startswith("VALID") else "UNCLEAR"
+        rec = {"kind": "alarm" if alarm else "escape", "verdict": verdict, "input": inp, "output": out[:6000],
+               "answer": answer[-3000:]}  # fmt: skip
+        (f.parent / f"audit-{f.name}").write_text(json.dumps(rec, ensure_ascii=False, indent=1))
+        print(d["pid"], d["sample"], rec["kind"], verdict, flush=True)
 
 
 def main() -> None:
@@ -218,10 +350,17 @@ def main() -> None:
     r.add_argument("--repair", action="store_true")
     r.add_argument("--no-judge", action="store_true")
     r.add_argument("--workers", type=int, default=4)
+    au = sub.add_parser("audit")
+    au.add_argument("--data", required=True)
+    au.add_argument("--out", required=True)
+    au.add_argument("--referee", default="claude-opus-5-5")
     sm = sub.add_parser("summary")
     sm.add_argument("--out", required=True)
     sm.add_argument("--problems")
     a = ap.parse_args()
+    if a.cmd == "audit":
+        audit(a)
+        return
     if a.cmd == "summary":
         probs = [x.strip() for x in Path(a.problems).read_text().splitlines() if x.strip()] if a.problems else None
         print(json.dumps(summary(Path(a.out), probs), ensure_ascii=False, indent=1))
