@@ -1,7 +1,7 @@
 # 标准核验结果
 
 由 `python3 scripts/check_standards.py` 生成，标准见 `STANDARDS.md`。
-合计：通过 141，未通过 0，跳过 0，人工 1。
+合计：通过 153，未通过 0，跳过 0，人工 1。
 
 
 ## D：文档要求
@@ -137,6 +137,18 @@
 | 细则 17.10 | 通过 | 1 个测试：test_state_dependent_needs_a_time |
 | 细则 17.11 | 通过 | 偏离说明，核验其实现细则 13.8、14.2 |
 | 细则 17.12 | 通过 | 1 个测试：test_conflict_group_fails_only_when_every_side_fails |
+| 细则 17.13 | 通过 | 1 个测试：test_selftest_catches_wrong_specs |
+| 细则 17.14 | 通过 | 1 个测试：test_repair_sees_one_counterexample_only |
+| 细则 20.1 | 通过 | 2 个测试：test_fix_round_sees_only_its_own_problems、test_prompts_have_no_evaluated_words |
+| 细则 20.2 | 通过 | 1 个测试：test_prompt_example_passes_selftest |
+| 细则 20.3 | 通过 | 4 个测试：test_prompt_example_passes_selftest、test_selftest_catches_wrong_specs、test_fix_round_sees_only_its_own_problems、test_unfixable_spec_gives_no_spec |
+| 细则 20.4 | 通过 | 1 个测试：test_frozen_inputs_are_fixed |
+| 细则 20.5 | 通过 | 1 个测试：test_cross_run_kinds |
+| 细则 20.6 | 通过 | 2 个测试：test_violation_needs_judges_and_unanimous_dismissal、test_crash_fails_without_judges |
+| 细则 20.7 | 通过 | 4 个测试：test_unfixable_spec_gives_no_spec、test_violation_needs_judges_and_unanimous_dismissal、test_too_many_dismissed_is_no_conclusion、test_crash_fails_without_judges |
+| 细则 20.8 | 通过 | 1 个测试：test_repair_sees_one_counterexample_only |
+| 细则 20.9 | 通过 | 1 个测试：test_box_isolation |
+| 细则 20.10 | 通过 | 1 个测试：test_settings_from_config |
 
 ## I：iCode 扩展规范
 
@@ -160,8 +172,8 @@
 | --- | --- | --- |
 | P-1 | 通过 | 只导入标准库 |
 | P-2 | 通过 | ruff target-version = py310，workflow 声明 requires-python >=3.10 |
-| P-3 | 通过 | ruff check：All checks passed!；ruff format：64 files already formatted |
-| P-4 | 通过 | 插件本体 327 KB；含 iCode 版权声明的文件：无 |
-| P-5 | 通过 | pytest：280 passed in 266.06s (0:04:26) |
-| P-6 | 通过 | 重建以来 25 个提交 |
+| P-3 | 通过 | ruff check：All checks passed!；ruff format：72 files already formatted |
+| P-4 | 通过 | 插件本体 354 KB；含 iCode 版权声明的文件：无 |
+| P-5 | 通过 | pytest：293 passed in 270.85s (0:04:30) |
+| P-6 | 通过 | 重建以来 27 个提交 |
 | P-7 | 通过 | 含令牌或密钥的文件：无 |
