@@ -151,6 +151,13 @@ def run_problem(pid: str, a, s: IO.Settings) -> None:
         spec, log = IO.write_spec(asker(a.model, 64000), req, examples, s)
         spec_file.write_text(json.dumps({"text": spec.text if spec else None, "conditions": spec.conditions if spec else {},
                                          "inputs": spec.inputs if spec else [], "log": log}, ensure_ascii=False, indent=1))  # fmt: skip
+    if spec is not None and not a.no_large:
+        large_file = out / "large.json"
+        if large_file.exists():
+            spec.large = json.loads(large_file.read_text())["inputs"]
+        else:
+            log = IO.write_large(asker(a.model, 64000), req, spec, s)
+            large_file.write_text(json.dumps({"inputs": spec.large, "log": log}, ensure_ascii=False))
     judge = asker(a.model, 32000) if not a.no_judge else None
     fixer = asker(a.model, 64000) if a.repair else None
     for i in a.samples:
@@ -256,7 +263,7 @@ def summary(out: Path, problems: list[str] | None) -> dict:
             r0 = d["rounds"][0]
             if v["kind"] == "alarm" and v["verdict"] == "INVALID":
                 r0["truth"] = {**r0["truth"], "audited": False}
-            elif v["kind"] == "escape" and v["verdict"] == "VALID":
+            elif v["kind"] == "escape" and v["verdict"] in ("VALID", "ILLEGAL_TEST"):
                 r0["truth"] = {**r0["truth"], "audited": True}
     for d in rows:
         for r in d["rounds"]:
@@ -296,6 +303,44 @@ acceptable. The first line of your answer must be exactly VALID or INVALID; then
 ```
 """
 
+AUDIT_INPUT = """You are refereeing a hidden test of a competitive programming problem. A program failed on the test
+input below (it crashed, or the input was too long to re-judge its output). Decide, from the input section of the
+statement alone, whether this input satisfies every stated constraint and guarantee (types, ranges, counts,
+formats). Only the beginning and the end of the input are shown; judge what is shown. The first line of your answer
+must be exactly LEGAL or ILLEGAL; then name the constraint you checked or the one that is broken.
+
+# Statement
+
+{req}
+
+# Input ({size} characters, {lines} lines)
+
+Beginning:
+```
+{head}
+```
+
+End:
+```
+{tail}
+```
+
+# What the program reported
+
+```
+{err}
+```
+"""
+
+
+def _audit_input(ref, req: str, inp: str, err: str) -> tuple[str, str]:
+    answer = ref(AUDIT_INPUT.format(req=req, size=len(inp), lines=inp.count("\n"), head=inp[:3000],
+                                    tail=inp[-500:], err=err[-1500:]))  # fmt: skip
+    first = next((ln.strip() for ln in answer.splitlines() if ln.strip()), "")
+    return (
+        "ILLEGAL_TEST" if first.startswith("ILLEGAL") else "LEGAL_TEST" if first.startswith("LEGAL") else "UNCLEAR"
+    ), answer
+
 
 def audit(a) -> None:
     """C4: an outside referee re-judges every sample where the io mode and the hidden tests disagree."""
@@ -315,19 +360,24 @@ def audit(a) -> None:
             inp, out = r0["counterexample"]["input"], r0["counterexample"]["output"]
         else:
             name = r0["truth"].get("first_fail")
-            if not name or r0["truth"]["verdicts"].get("WA", 0) == 0:
-                continue  # crashes and timeouts need no referee
+            v = r0["truth"]["verdicts"]
+            if not name or (v.get("WA", 0) == 0 and v.get("RE", 0) == 0):
+                continue  # timeouts need no referee
             inp = (pdir / "tests" / name).read_text()
-            if len(inp) > 3000:
-                (f.parent / f"audit-{f.name}").write_text(json.dumps({"kind": "escape", "verdict": "too large"}))
-                continue
             with tempfile.TemporaryDirectory(prefix="cfa-") as tmp:
                 t = Path(tmp)
                 (t / "sol.py").write_text(r0["program"])
                 (t / "in.txt").write_text(inp)
                 with open(t / "in.txt") as fin:
-                    _, raw = _box(t, ["/usr/bin/python3", "-I", "sol.py"], stdin=fin, timeout=20)
+                    _, raw = _box(t, ["/usr/bin/sh", "-c", "/usr/bin/python3 -I sol.py 2>&1 | tail -c 20000"], stdin=fin,
+                                  timeout=20)  # fmt: skip
             out = raw.decode(errors="replace")
+            if len(inp) > 3000 or v.get("WA", 0) == 0:  # a crash, or too long to re-judge: is the test itself legal?
+                verdict, answer = _audit_input(ref, req, inp, out)
+                rec = {"kind": "escape", "verdict": verdict, "input": inp[:3000], "answer": answer[-3000:]}
+                (f.parent / f"audit-{f.name}").write_text(json.dumps(rec, ensure_ascii=False, indent=1))
+                print(d["pid"], d["sample"], "escape", verdict, flush=True)
+                continue
         answer = ref(AUDIT.format(req=req, inp=inp.rstrip(), out=out[:6000].rstrip()))
         first = next((ln.strip() for ln in answer.splitlines() if ln.strip()), "")
         verdict = "INVALID" if first.startswith("INVALID") else "VALID" if first.startswith("VALID") else "UNCLEAR"
@@ -349,6 +399,8 @@ def main() -> None:
     r.add_argument("--model", default=MODEL)
     r.add_argument("--repair", action="store_true")
     r.add_argument("--no-judge", action="store_true")
+    r.add_argument("--no-large", action="store_true")
+    r.add_argument("--pass-with-dismissed", action="store_true")
     r.add_argument("--workers", type=int, default=4)
     au = sub.add_parser("audit")
     au.add_argument("--data", required=True)
@@ -369,6 +421,7 @@ def main() -> None:
     s = IO.Settings.load(config)
     if not a.repair:
         s.repair_rounds = 0
+    s.pass_with_dismissed = s.pass_with_dismissed or a.pass_with_dismissed
     pids = [x.strip() for x in Path(a.problems).read_text().splitlines() if x.strip()]
     with ThreadPoolExecutor(a.workers) as ex:
         list(ex.map(lambda p: run_problem(p, a, s), pids))

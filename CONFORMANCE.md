@@ -1,7 +1,7 @@
 # 标准核验结果
 
 由 `python3 scripts/check_standards.py` 生成，标准见 `STANDARDS.md`。
-合计：通过 153，未通过 0，跳过 0，人工 1。
+合计：通过 154，未通过 0，跳过 0，人工 1。
 
 
 ## D：文档要求
@@ -149,6 +149,7 @@
 | 细则 20.8 | 通过 | 1 个测试：test_repair_sees_one_counterexample_only |
 | 细则 20.9 | 通过 | 1 个测试：test_box_isolation |
 | 细则 20.10 | 通过 | 1 个测试：test_settings_from_config |
+| 细则 20.11 | 通过 | 2 个测试：test_large_inputs_catch_crashes_only、test_large_selftest_rejects_invalid_inputs |
 
 ## I：iCode 扩展规范
 
@@ -172,8 +173,8 @@
 | --- | --- | --- |
 | P-1 | 通过 | 只导入标准库 |
 | P-2 | 通过 | ruff target-version = py310，workflow 声明 requires-python >=3.10 |
-| P-3 | 通过 | ruff check：All checks passed!；ruff format：72 files already formatted |
-| P-4 | 通过 | 插件本体 354 KB；含 iCode 版权声明的文件：无 |
-| P-5 | 通过 | pytest：293 passed in 270.85s (0:04:30) |
-| P-6 | 通过 | 重建以来 27 个提交 |
+| P-3 | 通过 | ruff check：All checks passed!；ruff format：73 files already formatted |
+| P-4 | 通过 | 插件本体 360 KB；含 iCode 版权声明的文件：无 |
+| P-5 | 通过 | pytest：295 passed in 255.77s (0:04:15) |
+| P-6 | 通过 | 重建以来 30 个提交 |
 | P-7 | 通过 | 含令牌或密钥的文件：无 |

@@ -47,6 +47,11 @@ class Settings:
     max_judged: int = 3
     repair_rounds: int = 2
     max_input_chars: int = 20000
+    large_inputs: int = 3
+    large_timeout: float = 20.0
+    large_max_chars: int = 4_000_000
+    slow_fails: bool = False
+    pass_with_dismissed: bool = False
 
     @classmethod
     def load(cls, config: dict | None = None) -> Settings:
@@ -93,7 +98,8 @@ if req["op"] == "run":                      # run the program on each input (20.
         try:
             p = subprocess.run([sys.executable, "-I", "prog.py"], input=text, capture_output=True, text=True,
                                timeout=req["timeout"], preexec_fn=limit)
-            res.append({"rc": p.returncode, "out": p.stdout, "err": tail(p.stderr)})
+            res.append({"rc": p.returncode, "out": p.stdout if req.get("keep_output", True) else "",
+                        "err": tail(p.stderr)})
         except subprocess.TimeoutExpired:
             res.append({"rc": None, "out": "", "err": "timeout"})
     out["runs"] = res
@@ -104,7 +110,7 @@ else:
     except BaseException:
         print(json.dumps({"load_error": tail(traceback.format_exc())})); sys.exit()
     def call(f, *a):
-        signal.alarm(10)
+        signal.alarm(req.get("alarm", 10))
         try:
             with contextlib.redirect_stdout(io.StringIO()):
                 return True, f(*a)
@@ -118,6 +124,13 @@ else:
             ok, v = call(spec.generate, random.Random(seed), size)
             res.append({"ok": ok and isinstance(v, str), "text": v if ok and isinstance(v, str) else None,
                         "error": None if ok and isinstance(v, str) else (v if not ok else f"generate returned {type(v).__name__}")})
+        out["inputs"] = res
+    elif req["op"] == "generate_large":        # large inputs (20.11)
+        res = []
+        for seed in req["seeds"]:
+            ok, v = call(spec.generate_large, random.Random(seed))
+            res.append({"ok": ok and isinstance(v, str), "text": v if ok and isinstance(v, str) else None,
+                        "error": None if ok and isinstance(v, str) else (v if not ok else f"generate_large returned {type(v).__name__}")})
         out["inputs"] = res
     elif req["op"] == "valid":
         out["valid"] = [call(spec.valid_input, t) for t in req["inputs"]]
@@ -268,6 +281,7 @@ class Spec:
     conditions: dict[str, dict]
     inputs: list[str]
     log: list[dict] = field(default_factory=list)
+    large: list[str] = field(default_factory=list)
 
     @property
     def digest(self) -> str:
@@ -305,6 +319,52 @@ def write_spec(
     return Spec(spec, conds, list(dict.fromkeys(inputs)), log), log
 
 
+def large_selftest(module: str, s: Settings) -> tuple[list[str], list[str]]:
+    """20.11: (problems, inputs) for a module that defines generate_large."""
+    gen = box({"spec.py": module}, {"op": "generate_large", "seeds": [9001 + i for i in range(s.large_inputs)],
+                                    "memory_mb": s.memory_mb, "alarm": 20}, 120 + 30 * s.large_inputs)  # fmt: skip
+    if "box_error" in gen or "load_error" in gen:
+        return [f"模块无法运行：{gen.get('box_error') or gen.get('load_error')}"], []
+    problems, texts = [], []
+    for k, r in enumerate(gen["inputs"]):
+        if not r["ok"]:
+            problems.append(f"generate_large 第 {k + 1} 次出错：{r['error']}")
+        elif len(r["text"]) > s.large_max_chars:
+            problems.append(
+                f"generate_large 第 {k + 1} 次生成的输入有 {len(r['text'])} 个字符，超过 {s.large_max_chars}"
+            )
+        else:
+            texts.append(r["text"])
+    if texts:
+        gv = box({"spec.py": module}, {"op": "valid", "inputs": texts, "memory_mb": s.memory_mb, "alarm": 60},
+                 120 + 60 * len(texts))  # fmt: skip
+        for t, (ok, v) in zip(texts, gv.get("valid", [(False, gv.get("box_error"))] * len(texts)), strict=True):
+            if not ok or v:
+                problems.append(
+                    f"generate_large 生成的输入（开头：{t[:200]!r}）被 valid_input 判为不合法：{str(v)[:300]}"
+                )
+    return problems, list(dict.fromkeys(texts))
+
+
+def write_large(ask: Callable[[str], str], requirement: str, spec: Spec, s: Settings) -> list[dict]:
+    """20.11: the subtask adds generate_large to its frozen module; the inputs it gives are kept in spec.large."""
+    log: list[dict] = []
+    problems = "无"
+    for attempt in range(s.fix_rounds + 1):
+        answer = ask(prompt("io_large", REQUIREMENT=requirement, SPEC=spec.text, PROBLEMS=problems))
+        code = code_block(answer)
+        if code is None:
+            found, texts = ["回答中没有 ```python 代码块"], []
+        else:
+            found, texts = large_selftest(spec.text + "\n\n" + code, s)
+        log.append({"attempt": attempt, "answer": answer, "problems": found})
+        if not found:
+            spec.large = texts
+            break
+        problems = "\n".join(f"- {p}" for p in found)
+    return log
+
+
 # ---------------------------------------------------------------------------------------------------
 # Running the program, judging, concluding (20.5–20.7)
 # ---------------------------------------------------------------------------------------------------
@@ -335,6 +395,15 @@ def cross_run(spec: Spec, program: str, s: Settings) -> list[dict]:
             results[k].update(kind="violation", violations=[(CHECK_ERROR, str(v)[-300:])])
         elif viol:
             results[k].update(kind="violation", violations=viol)
+    if spec.large:  # 20.11: large inputs, only the exit status counts
+        big = box({"prog.py": program}, {"op": "run", "inputs": spec.large, "timeout": s.large_timeout,
+                                         "memory_mb": s.memory_mb, "keep_output": False},
+                  60 + s.large_timeout * len(spec.large))  # fmt: skip
+        if "box_error" in big:
+            raise RuntimeError(big["box_error"])
+        for text, r in zip(spec.large, big["runs"], strict=True):
+            kind = ("timeout" if s.slow_fails else "slow") if r["rc"] is None else "crash" if r["rc"] != 0 else "pass"
+            results.append({"input": text, "output": "", "kind": kind, "detail": r["err"], "large": True})
     return results
 
 
@@ -392,6 +461,8 @@ def conclude(ask: Callable[[str], str] | None, requirement: str, spec: Spec, res
         conclusion = NONE
     elif remaining:
         conclusion = FAIL
+    elif dismissed and not s.pass_with_dismissed:
+        conclusion = NONE
     else:
         conclusion = PASS
     counter = None
@@ -407,13 +478,16 @@ def conclude(ask: Callable[[str], str] | None, requirement: str, spec: Spec, res
         "dismissed": sorted(dismissed),
         "judged": judged,
         "counterexample": counter,
-        "counts": {k: sum(r["kind"] == k for r in results) for k in ("pass", "crash", "timeout", "violation")},
+        "counts": {k: sum(r["kind"] == k for r in results) for k in ("pass", "crash", "timeout", "violation", "slow")},
     }
 
 
 def counterexample_text(spec: Spec, case: dict) -> str:
     """What the main task sees in a repair round (20.8): the input, its own output and the broken condition only."""
-    lines = ["输入：", "```", case["input"].rstrip("\n"), "```"]
+    if case.get("large"):
+        lines = [f"输入（共 {len(case['input'])} 个字符的大输入，这里只给开头）：", "```", case["input"][:300], "```"]
+    else:
+        lines = ["输入：", "```", case["input"].rstrip("\n"), "```"]
     if case["kind"] == "timeout":
         lines.append("你的程序在这个输入上超时。")
     elif case["kind"] == "crash":

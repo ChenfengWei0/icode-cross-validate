@@ -110,7 +110,9 @@ def test_violation_needs_judges_and_unanimous_dismissal():
     mixed = iter(["不违反", "违反"] * 5)
     assert IO.conclude(lambda p: next(mixed), REQ, spec, res, FAST)["conclusion"] == IO.FAIL
     c = IO.conclude(judge("不违反\n看错了"), REQ, spec, res, FAST)
-    assert c["dismissed"] == ["C4"] and c["conclusion"] == IO.PASS
+    assert c["dismissed"] == ["C4"] and c["conclusion"] == IO.NONE
+    lenient = IO.Settings(selftest_inputs=20, run_inputs=30, pass_with_dismissed=True)
+    assert IO.conclude(judge("不违反\n看错了"), REQ, spec, res, lenient)["conclusion"] == IO.PASS
 
 
 def test_too_many_dismissed_is_no_conclusion():
@@ -119,7 +121,47 @@ def test_too_many_dismissed_is_no_conclusion():
     res = IO.cross_run(spec, "print(7, 7)\n", FAST)
     c = IO.conclude(lambda p: "不违反", REQ, spec, res, FAST, dismissed={"C1", "C2"})
     assert c["conclusion"] == IO.NONE and len(c["dismissed"]) * 2 > len(spec.conditions)
-    assert IO.conclude(lambda p: "不违反", REQ, spec, res, FAST, dismissed={"C1"})["conclusion"] == IO.PASS
+    assert IO.conclude(lambda p: "不违反", REQ, spec, res, FAST, dismissed={"C1"})["conclusion"] == IO.NONE
+
+
+LARGE = """def generate_large(rng):
+    return f"{rng.choice([100, 99, rng.randint(60, 100)])}\\n"
+"""
+SMALL_TABLE = """n = int(input())
+seen = [0] * 50
+seen[n - 1] = 1
+print(-1 if n == 2 else "1 3")
+"""
+
+
+def test_large_inputs_catch_crashes_only():
+    """20.11 the subtask adds generate_large; a crash on a large input fails, a slow run does not."""
+    spec = frozen()
+    spec.inputs = spec.inputs[:2]  # the examples only, so every larger n comes from generate_large
+    prompts = []
+
+    def ask(p):
+        prompts.append(p)
+        return f"```python\n{LARGE}```"
+
+    log = IO.write_large(ask, REQ, spec, FAST)
+    assert spec.large and not log[-1]["problems"] and SMALL_TABLE not in prompts[0] and "def check" in prompts[0]
+    assert IO.conclude(None, REQ, spec, IO.cross_run(spec, RIGHT, FAST), FAST)["conclusion"] == IO.PASS
+    c = IO.conclude(lambda p: pytest.fail("judged a crash"), REQ, spec, IO.cross_run(spec, SMALL_TABLE, FAST), FAST)
+    assert c["conclusion"] == IO.FAIL and c["counterexample"].get("large")
+    assert "大输入" in IO.counterexample_text(spec, c["counterexample"])
+    slow = "import time\nn = int(input())\nif n > 50: time.sleep(5)\nprint(-1 if n == 2 else '1 3')\n"
+    quick = IO.Settings(selftest_inputs=20, run_inputs=30, large_timeout=1.0)
+    c = IO.conclude(None, REQ, spec, IO.cross_run(spec, slow, quick), quick)
+    assert c["conclusion"] == IO.PASS and c["counts"]["slow"] == len(spec.large)
+
+
+def test_large_selftest_rejects_invalid_inputs():
+    """20.11 generate_large must give inputs valid_input accepts; otherwise no large inputs are kept."""
+    spec = frozen()
+    bad = "def generate_large(rng):\n    return '1000\\n'\n"
+    log = IO.write_large(lambda p: f"```python\n{bad}```", REQ, spec, FAST)
+    assert spec.large == [] and len(log) == FAST.fix_rounds + 1 and "不合法" in log[0]["problems"][0]
 
 
 def test_crash_fails_without_judges():
