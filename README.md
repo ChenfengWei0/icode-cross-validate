@@ -1043,6 +1043,7 @@ scripts/bench_classeval.py     在公开基准 ClassEval 上衡量凭证：有�
 BENCHMARK.md                   ClassEval 评测的规程：选题、防泄漏、判对、指标
 scripts/bench_cf.py            在 Codeforces 题上衡量 io 模式（BENCHMARK_CF.md，不是细则）
 BENCHMARK_CF.md                io 模式评测的规程
+OVERVIEW.md                    给人看的项目概览：目标、做法、接入方式、触发机制、验证结果（不是细则）
 examples/stack/                评测用的栈需求和固定的变异版本
 examples/snake_logic/          评测用的贪吃蛇逻辑：模糊的需求、预先放好的代码、由独立 agent 写的 bug 列表
 examples/snake_c/              同一需求的 C 版本，用于 verify 检查的评测
