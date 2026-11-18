@@ -204,7 +204,7 @@ def icode_checks(home: Path) -> dict[str, tuple[str, str]]:
     )
     hooks = json.loads(read(ROOT / "hooks" / "hooks.json"))
     events = {"session_start", "session_restored", "session_end", "before_turn", "after_turn", "user_prompt_submit",
-              "user_interrupt", "before_tool_call", "after_tool_call", "tool_error"}  # fmt: skip
+              "user_interrupt", "before_tool_call", "after_tool_call", "tool_error", "pre_compact"}  # fmt: skip
     problems = []
     ids = [h["id"] for h in hooks["hooks"]]
     if hooks.get("version") != 1 or len(set(ids)) != len(ids) or not all(i.startswith("cv-") for i in ids):

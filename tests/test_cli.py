@@ -537,3 +537,14 @@ def test_check_prints_no_report(home, tmp_path, fake_icode, capsys):
     CLI.main(["check", str(p)])
     out = capsys.readouterr().out
     assert "比对结论：比对通过" in out and "假的" not in out
+
+
+def test_last_run_is_the_latest_by_start_time(home, tmp_path):
+    """细则 16.3: two runs in the same second sort by their random suffix; the start time decides."""
+    p = git_project(tmp_path)
+    CLI.main(["init", str(p)])
+    runs = S.ensure_private(S.project_dir(p) / "runs")
+    for name, at, last in (("20261118T000000Z-ffff", 1.0, "M1"), ("20261118T000000Z-0000", 1.5, "M2")):
+        S.ensure_private(runs / name)
+        S.write_json(runs / name / "run.json", {"mode": CLI.FLOW.MODE_ACCUM, "started_at": at, "last_message": last})
+    assert CLI.last_run(p)["last_message"] == "M2"

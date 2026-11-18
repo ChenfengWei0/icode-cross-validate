@@ -383,12 +383,14 @@ def cmd_new(args) -> int:
 
 
 def last_run(project: Path) -> dict | None:
+    """细则 16.3: the latest run by its start time; run names share a second and then sort by their random suffix."""
     runs = S.project_dir(project) / "runs"
-    for run in sorted(runs.iterdir(), reverse=True) if runs.exists() else []:
+    found = []
+    for run in runs.iterdir() if runs.exists() else []:
         info = S.read_json(run / "run.json")
         if info and info.get("mode") == FLOW.MODE_ACCUM:
-            return {**info, "run": run.name}
-    return None
+            found.append((float(info.get("started_at", 0)), run.name, {**info, "run": run.name}))
+    return max(found, key=lambda x: x[:2])[2] if found else None
 
 
 def _msg_num(mid: str | None) -> int:
