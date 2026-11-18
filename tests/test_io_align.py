@@ -142,6 +142,10 @@ def test_structural_from_python_files(tmp_path):
     d.category["f"], d.params["f"] = "接口", []
     sig = {"tree": F.node("struct", F.code("Solution.f"), F.lit("f(self, a: int) -> int"), kind="signature")}
     assert IO.structural(sig, tmp_path)[0] == M.PASSED
+    bare = {"tree": F.node("struct", F.code("f"), F.lit("(self, a: int) → int"), kind="signature")}
+    assert IO.structural(bare, tmp_path)[0] == M.PASSED
+    wrong = {"tree": F.node("struct", F.code("f"), F.lit("(self, a: str) → int"), kind="signature")}
+    assert IO.structural(wrong, tmp_path)[0] == M.CHECK_FAILED
     has = {"tree": F.node("struct", F.code("Solution"), F.code("f"), kind="contains")}
     assert IO.structural(has, tmp_path)[0] == M.PASSED
     missing = {"tree": F.node("struct", F.code("Solver"), kind="exists")}

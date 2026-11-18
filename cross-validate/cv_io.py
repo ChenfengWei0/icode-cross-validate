@@ -281,8 +281,10 @@ def structural(prop: dict, w: Path) -> tuple[str, str | None]:
         fn = funcs.get(name)
         if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
             return M.CHECK_FAILED, f"代码中没有函数 {name}"
-        text = f"{fn.name}({ast.unparse(fn.args)})" + (f" -> {ast.unparse(fn.returns)}" if fn.returns else "")
-        ok = _flat(text) == _flat(str(args[1].get("value", "")))
+        params = f"({ast.unparse(fn.args)})" + (f" -> {ast.unparse(fn.returns)}" if fn.returns else "")
+        text = fn.name + params
+        quoted = _flat(str(args[1].get("value", "")))
+        ok = quoted in (_flat(text), _flat(params))  # 细则 7.6 quotes the parameter list, with or without the name
         return (M.PASSED, None) if ok else (M.CHECK_FAILED, f"签名是「{text}」")
     return M.ALIGN_FAILED, "io 对齐判不了这种结构命题"
 
