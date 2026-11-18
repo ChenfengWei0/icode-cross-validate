@@ -807,15 +807,20 @@ def _io_props(run: Path) -> tuple[dict[str, dict], dict[str, str]]:
 
 
 def _io_requirement(run: Path) -> str:
-    """细则 11.12: the requirement text; in accumulation mode also the original fragments each entry quotes,
-    since a consolidated sentence may have rewritten an example."""
+    """细则 11.12: the requirement text; in accumulation mode also the full preprocessed text of every message R
+    cites, with its disposition, since a consolidated sentence may have rewritten or left out an example."""
     text = (run / "requirement.txt").read_text(encoding="utf-8")
     info = S.read_json(run / "run.json", {}) or {}
     if info.get("mode") != MODE_ACCUM:
         return text
     req = S.read_json(run / "requirement.json", {}) or {}
-    quotes = list(dict.fromkeys(q["text"] for e in req.get("entries", []) for q in e.get("quotes", [])))
-    return text + "\n\n# 原话片段\n\n" + "\n\n".join(quotes) if quotes else text
+    cited = {q["from"] for e in req.get("entries", []) for q in e.get("quotes", [])}
+    dispositions = req.get("messages", {})
+    messages = [m for m in _lines(run / "ledger.jsonl") if m.get("id") in cited]
+    if not messages:
+        return text
+    parts = [f"## {m['id']}（{dispositions.get(m['id'], '')}）\n\n{m['text']}" for m in messages]
+    return text + "\n\n# 需求引用到的消息原文\n\n" + "\n\n".join(parts)
 
 
 def io_align_prompt(state: dict) -> str | None:  # 算法1 第6行（细则 11.12）

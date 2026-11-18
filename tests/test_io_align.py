@@ -259,3 +259,26 @@ def test_a_call_the_module_cannot_map_is_set_aside(module):
     props = {"R8": call_prop("R8", "`smallest`([5, 2, 7]) = 2"), **PROPS}
     report = IO.trial(module, props, set(), REQ, set(), IO.settings({}, {}))
     assert "R8" in report["unmapped"] and report["problems"] == []
+
+
+def test_accumulation_mode_shows_the_cited_messages(tmp_path):
+    """细则 11.12: a consolidated sentence may drop an example; the cited messages are shown in full."""
+    import cv_flow as FLOW
+
+    run = tmp_path / "run"
+    run.mkdir()
+    S.write_json(run / "run.json", {"mode": FLOW.MODE_ACCUM})
+    S.write_text(run / "requirement.txt", "输出最小值。")
+    S.write_json(
+        run / "requirement.json",
+        {
+            "entries": [{"text": "输出最小值。", "quotes": [{"from": "M2", "text": "最小值"}]}],
+            "messages": {"M1": "已被更正", "M2": "更正 M1"},
+        },
+    )
+    (run / "ledger.jsonl").write_text(
+        '{"id": "M1", "text": "输出最大值"}\n{"id": "M2", "text": "改成最小值。Input:\\n3\\n5 2 7\\nOutput:\\n2"}\n'
+    )
+    text = FLOW._io_requirement(run)
+    assert "M2（更正 M1）" in text and "5 2 7" in text
+    assert "最大值" not in text

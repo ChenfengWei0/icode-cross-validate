@@ -335,7 +335,8 @@ def summary(ids_file: str) -> None:
                 continue
             j = S.read_json(OUT / "judge" / f"{f.stem}.json") or {}
             rows.append({
-                "qid": q, "sample": f.stem, "ok": g["logic_ok"] if KIND == "cf" else g["ok"], "strict_ok": g["ok"],
+                "qid": q, "sample": f.stem, "ok": g.get("long_ok") is True if KIND == "cf" else g["ok"], "strict_ok": g["ok"],
+                "ok_bound": g.get("long_ok") in (True, None) if KIND == "cf" else g["ok"],
                 "cv": c["conclusion"] == "比对通过", "cv_failed": c["conclusion"] == "比对未通过",
                 "usable": c.get("usable", False), "judge": j.get("yes"), "examples": examples_pass(q, f, g),
             })  # fmt: skip
@@ -373,6 +374,9 @@ def summary(ids_file: str) -> None:
 
     block("usable problems (main, L7)", usable)
     block("all problems", rows)
+    if KIND == "cf":  # K4: unknowns counted right, as a bound; and the 20-second "correct"
+        block("usable, unknown counted right (bound)", [{**r, "ok": r["ok_bound"]} for r in usable])
+        block("usable, correct within 20 s", [{**r, "ok": r["strict_ok"]} for r in usable])
     print(f"\nusable problems {len({r['qid'] for r in usable})}/{len({r['qid'] for r in rows})}")
 
 
