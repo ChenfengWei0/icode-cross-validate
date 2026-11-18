@@ -74,14 +74,6 @@ def test_placeholders_filled():
         "W": "/w",
         "ALIGN": "/a",
         "VERIFY": "v",
-        "SPEC": "c",
-        "CODE": "k",
-        "COUNTEREXAMPLE": "ce",
-        "INPUT": "i",
-        "OUTPUT": "o",
-        "CONDITION": "cd",
-        "QUOTE": "qt",
-        "MESSAGE": "mg",
     }
     for path in PROMPTS.glob("*.md"):
         text = FLOW.prompt(path.stem, **values)

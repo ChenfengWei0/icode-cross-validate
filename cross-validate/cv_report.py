@@ -384,7 +384,9 @@ def render(data: dict) -> str:
     if data.get("conclusion_without_review"):
         out.append(f"- 不算复查标记时的结论：{data['conclusion_without_review']}（细则 17.12）")
     if s.get("unstated_inputs"):
-        out.append(f"- 对齐 agent 标为超出需求的输入的检查 {s['unstated_inputs']} 项，结果照常计入比对结论，另列供人确认（细则 13.8）")
+        out.append(
+            f"- 对齐 agent 标为超出需求的输入的检查 {s['unstated_inputs']} 项，结果照常计入比对结论，另列供人确认（细则 13.8）"
+        )
     out.append("")
     if data["notes"]:
         out.append("## 注")

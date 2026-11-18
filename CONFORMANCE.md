@@ -1,7 +1,7 @@
 # 标准核验结果
 
 由 `python3 scripts/check_standards.py` 生成，标准见 `STANDARDS.md`。
-合计：通过 154，未通过 0，跳过 0，人工 1。
+合计：通过 141，未通过 0，跳过 0，人工 1。
 
 
 ## D：文档要求
@@ -85,11 +85,11 @@
 | 细则 10.3 | 通过 | 5 个测试：test_weak_next、test_nnf_duals、test_no_contradiction_is_true、test_primes_anywhere 等 |
 | 细则 10.4 | 通过 | 1 个测试：test_classes |
 | 细则 11.1 | 通过 | 1 个测试：test_align_input |
-| 细则 11.2 | 通过 | 4 个测试：test_validate_format、test_no_links_in_align、test_flagged_checks_cover_nothing、test_verify_checks_in_checks_json |
+| 细则 11.2 | 通过 | 4 个测试：test_validate_format、test_no_links_in_align、test_flagged_checks_still_count、test_verify_checks_in_checks_json |
 | 细则 11.3 | 通过 | 1 个测试：test_command_checks |
 | 细则 11.4 | 通过 | 1 个测试：test_trace_checks |
 | 细则 11.5 | 通过 | 2 个测试：test_coverage、test_verify_checks_in_checks_json |
-| 细则 11.6 | 通过 | 4 个测试：test_coverage、test_no_alignment_answer、test_flagged_checks_cover_nothing、test_verify_checks_in_checks_json |
+| 细则 11.6 | 通过 | 4 个测试：test_coverage、test_no_alignment_answer、test_flagged_checks_still_count、test_verify_checks_in_checks_json |
 | 细则 11.7 | 通过 | 8 个测试：test_validate_format、test_revision_paths、test_scenario_problem、test_preflight_reports_the_format_and_nothing_else 等 |
 | 细则 11.8 | 通过 | 5 个测试：test_budget、test_truncation、test_budget_cut_does_not_pass、test_judging_is_bounded 等 |
 | 细则 11.9 | 通过 | 1 个测试：test_frozen_checks_run |
@@ -108,7 +108,7 @@
 | 细则 13.5 | 通过 | 2 个测试：test_liveness、test_liveness_mark |
 | 细则 13.6 | 通过 | 1 个测试：test_trace_checks |
 | 细则 13.7 | 通过 | 2 个测试：test_antecedent_never_fired、test_harness_cannot_hide_or_skip_the_check |
-| 细则 13.8 | 通过 | 4 个测试：test_review_marks_reach_the_conclusion、test_what_is_only_for_a_person_catches_nothing、test_what_the_requirement_leaves_open_is_for_a_person、test_conflict_group_fails_only_when_every_side_fails |
+| 细则 13.8 | 通过 | 5 个测试：test_review_marks_reach_the_conclusion、test_what_is_only_for_a_person_catches_nothing、test_flagged_checks_still_count、test_what_the_requirement_leaves_open_is_for_a_person 等 |
 | 细则 14.1 | 通过 | 3 个测试：test_conclusions、test_report_text_cannot_forge_conclusion、test_verify_in_the_checker_and_the_report |
 | 细则 14.2 | 通过 | 6 个测试：test_tampering_is_detected、test_conclusions、test_review_marks_reach_the_conclusion、test_what_the_requirement_leaves_open_is_for_a_person 等 |
 | 细则 14.3 | 通过 | 1 个测试：test_turn_and_session_triggers |
@@ -137,19 +137,6 @@
 | 细则 17.10 | 通过 | 1 个测试：test_state_dependent_needs_a_time |
 | 细则 17.11 | 通过 | 偏离说明，核验其实现细则 13.8、14.2 |
 | 细则 17.12 | 通过 | 1 个测试：test_conflict_group_fails_only_when_every_side_fails |
-| 细则 17.13 | 通过 | 1 个测试：test_selftest_catches_wrong_specs |
-| 细则 17.14 | 通过 | 1 个测试：test_repair_sees_one_counterexample_only |
-| 细则 20.1 | 通过 | 2 个测试：test_fix_round_sees_only_its_own_problems、test_prompts_have_no_evaluated_words |
-| 细则 20.2 | 通过 | 1 个测试：test_prompt_example_passes_selftest |
-| 细则 20.3 | 通过 | 4 个测试：test_prompt_example_passes_selftest、test_selftest_catches_wrong_specs、test_fix_round_sees_only_its_own_problems、test_unfixable_spec_gives_no_spec |
-| 细则 20.4 | 通过 | 1 个测试：test_frozen_inputs_are_fixed |
-| 细则 20.5 | 通过 | 1 个测试：test_cross_run_kinds |
-| 细则 20.6 | 通过 | 2 个测试：test_violation_needs_judges_and_unanimous_dismissal、test_crash_fails_without_judges |
-| 细则 20.7 | 通过 | 4 个测试：test_unfixable_spec_gives_no_spec、test_violation_needs_judges_and_unanimous_dismissal、test_too_many_dismissed_is_no_conclusion、test_crash_fails_without_judges |
-| 细则 20.8 | 通过 | 1 个测试：test_repair_sees_one_counterexample_only |
-| 细则 20.9 | 通过 | 1 个测试：test_box_isolation |
-| 细则 20.10 | 通过 | 1 个测试：test_settings_from_config |
-| 细则 20.11 | 通过 | 2 个测试：test_large_inputs_catch_crashes_only、test_large_selftest_rejects_invalid_inputs |
 
 ## I：iCode 扩展规范
 
@@ -160,7 +147,7 @@
 | I-AG-3 | 通过 | cv-align builtins：['filesystem.read', 'filesystem.write', 'search', 'shell'] |
 | I-HK-1 | 通过 | 7 个 hook：cv-record、cv-turn、cv-session-end、cv-subtask-guard、cv-history-guard-path、cv-history-guard-command、cv-history-guard-workdir |
 | I-HK-2 | 通过 | cv_cli.hook 从 CHRYS_HOOK_PAYLOAD_FILE 读输入，向 CHRYS_HOOK_RESULT 写决定 |
-| I-HK-3 | 通过 | PASS 1 file · 7 hooks · 1 warning |
+| I-HK-3 | 通过 | PASS 1 file · 7 hooks |
 | I-WF-1 | 通过 | cross-validate/cross-validate.py 顶层只有导入、函数定义、赋值和构图调用，并定义 workflow |
 | I-WF-2 | 通过 | 与标准库同名：无；相对导入或第三方导入：无 |
 | I-WF-3 | 通过 | 1 个测试：test_graph_builds |
@@ -173,8 +160,8 @@
 | --- | --- | --- |
 | P-1 | 通过 | 只导入标准库 |
 | P-2 | 通过 | ruff target-version = py310，workflow 声明 requires-python >=3.10 |
-| P-3 | 通过 | ruff check：All checks passed!；ruff format：74 files already formatted |
-| P-4 | 通过 | 插件本体 360 KB；含 iCode 版权声明的文件：无 |
-| P-5 | 通过 | pytest：295 passed in 231.30s (0:03:51) |
-| P-6 | 通过 | 重建以来 32 个提交 |
+| P-3 | 通过 | ruff check：All checks passed!；ruff format：65 files already formatted |
+| P-4 | 通过 | 插件本体 327 KB；含 iCode 版权声明的文件：无 |
+| P-5 | 通过 | pytest：280 passed in 218.38s (0:03:38) |
+| P-6 | 通过 | 重建以来 40 个提交 |
 | P-7 | 通过 | 含令牌或密钥的文件：无 |
