@@ -1,6 +1,6 @@
 # LiveCodeBench 评测规程
 
-本文规定怎样在公开基准 LiveCodeBench 上衡量交叉验证。它不是细则。方法照 README 算法 1：子任务先写命题，程序生成公式，对齐后由 checker 判定公式。第 6 行用细则 11.12 的 io 对齐。
+本文规定怎样在公开基准 LiveCodeBench 上衡量交叉验证。它不是细则。这是第二组结果；主实验见 BENCHMARK_CF.md，因为 LiveCodeBench 上 pₘ 约为 0.89，留给交叉验证的错误太少。方法照 README 算法 1：子任务先写命题，程序生成公式，对齐后由 checker 判定公式。第 6 行用细则 11.12 的 io 对齐。
 
 ## L1 问题
 

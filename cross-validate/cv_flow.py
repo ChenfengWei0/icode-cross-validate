@@ -806,6 +806,18 @@ def _io_props(run: Path) -> tuple[dict[str, dict], dict[str, str]]:
     return props, dropped
 
 
+def _io_requirement(run: Path) -> str:
+    """细则 11.12: the requirement text; in accumulation mode also the original fragments each entry quotes,
+    since a consolidated sentence may have rewritten an example."""
+    text = (run / "requirement.txt").read_text(encoding="utf-8")
+    info = S.read_json(run / "run.json", {}) or {}
+    if info.get("mode") != MODE_ACCUM:
+        return text
+    req = S.read_json(run / "requirement.json", {}) or {}
+    quotes = list(dict.fromkeys(q["text"] for e in req.get("entries", []) for q in e.get("quotes", [])))
+    return text + "\n\n# 原话片段\n\n" + "\n\n".join(quotes) if quotes else text
+
+
 def io_align_prompt(state: dict) -> str | None:  # 算法1 第6行（细则 11.12）
     run = Path(state["run"])
     data = S.read_json(run / "propositions.json")
@@ -825,7 +837,7 @@ def io_align_prompt(state: dict) -> str | None:  # 算法1 第6行（细则 11.1
         "io_align",
         DECLS=_decl_text(Decls.from_json(data["decls"])),
         PROPOSITIONS=listing,
-        REQUIREMENT=(run / "requirement.txt").read_text(encoding="utf-8"),
+        REQUIREMENT=_io_requirement(run),
         PROTOCOL=io.get("protocol") or "输入文本就是程序的标准输入，输出文本就是程序的标准输出。",
         EXAMPLE_PROPS="、".join(sorted((q for q in ex if not IO.calls_of(props[q]["tree"])), key=_num_id))
         or "（没有）",
@@ -870,7 +882,7 @@ def io_align_check(state: dict, answer: str | None, attempt: int, config: dict) 
         S.write_text(align / IO.MODULE, code)
         module = IO.Module(align / IO.MODULE, cfg)
         try:
-            requirement = (run / "requirement.txt").read_text(encoding="utf-8")
+            requirement = _io_requirement(run)
             report = IO.trial(module, props, entities, requirement, ex_props, cfg)
         finally:
             module.close()

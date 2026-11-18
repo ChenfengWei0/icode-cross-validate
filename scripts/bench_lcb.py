@@ -9,11 +9,14 @@ model calls, the problems and the samples. Data and results stay outside the rep
     bench_lcb.py summary <ids-file>    the numbers of L1 and L7 over the problems listed in the file
     bench_lcb.py split                 write dev.txt and heldout.txt (L2)
 
-Environment: CV_LCB_DATA (problems/, gen/, grades/), CV_LCB_OUT (results), CV_BENCH_KEY_FILE.
+Environment: CV_LCB_DATA (problems/, gen/, grades/), CV_LCB_OUT (results), CV_BENCH_KEY_FILE, and
+CV_BENCH_KIND: `lcb` (BENCHMARK_LCB.md, the default) or `cf` (BENCHMARK_CF.md: Codeforces statements, the
+"logically correct" metric, examples run directly).
 """
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import os
@@ -31,6 +34,7 @@ DATA = Path(os.environ.get("CV_LCB_DATA", Path.home() / ".claude/jobs/5573734e/t
 OUT = Path(os.environ.get("CV_LCB_OUT", DATA / "cv"))
 MODEL = "claude-haiku-5-5"
 MAX_TOKENS = 32000
+KIND = os.environ.get("CV_BENCH_KIND", "lcb")
 MULTI_ANSWER = ("abc396_e", "abc397_d", "abc398_f", "arc185_c", "arc190_a", "arc191_c")  # L2
 SITE = Path.home() / ".local/lib/python3.12/site-packages"
 DIST = "/usr/local/lib/python3.12/dist-packages"
@@ -98,14 +102,35 @@ def problem(qid: str) -> dict:
     return json.loads((DATA / "problems" / qid / "problem.json").read_text(encoding="utf-8"))
 
 
+def cf_examples(p: dict) -> list[tuple[str, str]]:
+    ex = p["examples"]
+    ex = ast.literal_eval(ex) if isinstance(ex, str) and ex not in ("None", "") else (ex or [])
+    return [(e["input"].replace("\r\n", "\n"), e["output"].replace("\r\n", "\n")) for e in ex]
+
+
+def cf_statement(p: dict) -> str:
+    """BENCHMARK_CF.md K5: the statement exactly as the main task saw it, without the instruction line."""
+    exs = "\n\n".join(f"Input:\n{a}\nOutput:\n{b}" for a, b in cf_examples(p))
+    note = p.get("note")
+    return (
+        f"# {p['title']}\n\nTime limit: {p['time_limit']} s, memory limit: {p['memory_limit']} MB\n\n{p['description']}\n\n"
+        f"## Input\n\n{p['input_format']}\n\n## Output\n\n{p['output_format']}\n\n## Examples\n\n{exs}\n\n"
+        + (f"## Note\n\n{note}\n" if note and note != "None" else "")
+    )
+
+
 def requirement(p: dict) -> str:
     """L5: the statement; for LeetCode also the class skeleton the main task was given."""
+    if KIND == "cf":
+        return cf_statement(p)
     if p["starter_code"]:
         return f"{p['question_content']}\n\n```python\n{p['starter_code']}\n```\n"
     return p["question_content"]
 
 
 def io_settings(p: dict) -> dict:
+    if KIND == "cf":  # K3: the standard library only, as the main task was told
+        return {"command": "python3 -I main.py"}
     binds = ["--tmpfs", DIST]
     for name in ("numpy", "numpy.libs", "sortedcontainers"):
         if (SITE / name).is_dir():
@@ -157,7 +182,7 @@ def prep(qid: str) -> None:
     w = OUT / "w" / qid
     shutil.rmtree(w, ignore_errors=True)
     w.mkdir(parents=True)
-    if p["testtype"] == "functional":
+    if p.get("testtype") == "functional":
         (w / "cv_call.py").write_text(CALL, encoding="utf-8")
     pdir = S.ensure_private(S.project_dir(w))
     S.write_json(pdir / "project.json", {"project": str(w), "settings": {"io": io_settings(p)}})
@@ -298,6 +323,9 @@ def _delta(rows: list[dict], key: str) -> float | None:
 
 def summary(ids_file: str) -> None:
     ids = [q for q in Path(ids_file).read_text(encoding="utf-8").split() if q]
+    if KIND == "cf":  # K4 自检: problems whose tests fail the self-check are left out
+        keep = S.read_json(DATA / "selfcheck.json") or {}
+        ids = [q for q in ids if keep.get(q, {}).get("keep")]
     rows = []
     for q in ids:
         for f in samples(q):
@@ -307,7 +335,7 @@ def summary(ids_file: str) -> None:
                 continue
             j = S.read_json(OUT / "judge" / f"{f.stem}.json") or {}
             rows.append({
-                "qid": q, "sample": f.stem, "ok": g["ok"], "logic_ok": g["logic_ok"],
+                "qid": q, "sample": f.stem, "ok": g["logic_ok"] if KIND == "cf" else g["ok"], "strict_ok": g["ok"],
                 "cv": c["conclusion"] == "比对通过", "cv_failed": c["conclusion"] == "比对未通过",
                 "usable": c.get("usable", False), "judge": j.get("yes"), "examples": examples_pass(q, f, g),
             })  # fmt: skip
@@ -349,6 +377,53 @@ def summary(ids_file: str) -> None:
 
 
 def examples_pass(qid: str, f: Path, g: dict) -> bool:
+    if KIND == "cf":
+        return cf_examples_pass(qid, f)
+    return lcb_examples_pass(qid, f, g)
+
+
+def cf_examples_pass(qid: str, f: Path) -> bool:
+    """L6 示例 for Codeforces: run the program on the statement's examples; the checker or token comparison."""
+    cache = OUT / "examples" / f"{f.stem}.json"
+    got = S.read_json(cache)
+    if got is not None:
+        return got["pass"]
+    sys.path.insert(0, str(DATA / "tools"))
+    import grade as G  # the dataset-side grader (K4), outside the repository
+
+    ok = True
+    for a, b in cf_examples(problem(qid)):
+        with __import__("tempfile").TemporaryDirectory(prefix="cfex-") as d:
+            d = Path(d)
+            (d / "in.txt").write_text(a)
+            (d / "ans.txt").write_text(b)
+            shutil.copy(f, d / "sol.py")
+            with open(d / "in.txt") as fin:
+                rc, out, _, _ = G.box(d, ["/usr/bin/python3", "-I", "sol.py"], stdin=fin, timeout=G.LIMIT)
+            if rc != 0:
+                ok = False
+                break
+            (d / "sub.txt").write_bytes(out)
+            chk = DATA / "problems" / qid / "checker.py"
+            if chk.exists():
+                shutil.copy(chk, d / "checker.py")
+                rc, out, _, _ = G.box(
+                    d, ["/usr/bin/python3", "-I", "checker.py", "in.txt", "ans.txt", "sub.txt"], timeout=300
+                )
+                try:
+                    ok = float(out.decode().split()[-1]) in (1, 100)
+                except (ValueError, IndexError):
+                    ok = False
+            else:
+                ok = G.same(out.decode(errors="replace"), b)
+            if not ok:
+                break
+    S.ensure_private(OUT / "examples")
+    S.write_json(cache, {"pass": ok})
+    return ok
+
+
+def lcb_examples_pass(qid: str, f: Path, g: dict) -> bool:
     """L6 示例: the public tests are the statement's examples and come first in the graded list, so a failed
     example would be the first failure recorded."""
     n = len(problem(qid)["public"])
