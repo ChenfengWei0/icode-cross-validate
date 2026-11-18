@@ -827,7 +827,24 @@ def io_align_prompt(state: dict) -> str | None:  # 算法1 第6行（细则 11.1
         PROPOSITIONS=listing,
         REQUIREMENT=(run / "requirement.txt").read_text(encoding="utf-8"),
         PROTOCOL=io.get("protocol") or "输入文本就是程序的标准输入，输出文本就是程序的标准输出。",
-        EXAMPLE_PROPS="、".join(sorted(ex, key=_num_id)) or "（没有）",
+        EXAMPLE_PROPS="、".join(sorted((q for q in ex if not IO.calls_of(props[q]["tree"])), key=_num_id))
+        or "（没有）",
+        CALLS=_calls_note(props),
+    )
+
+
+def _calls_note(props: dict[str, dict]) -> str:
+    """细则 11.12: a 调用 proposition is one run; the module maps the call to an input and reads the result."""
+    ids = [pid for pid, p in props.items() if IO.calls_of(p["tree"])]
+    if not ids:
+        return "没有调用命题，不需要定义 `call_input` 和 `call_output`。"
+    return (
+        f"命题 {'、'.join(ids)} 说的是一次调用的结果，例如 `f(「ab」, 2) = 3`。每次调用就是程序的一次运行。"
+        "模块要再定义两个函数：\n"
+        "- `call_input(name, args)`：调用名 `name`（字符串）和参数列表 `args`（JSON 值）对应的输入文本；\n"
+        "- `call_output(name, output_text)`：从这次运行的输出文本中读出调用的结果（JSON 值）；"
+        '读不出时返回 `{"无法读出": "原因"}`。\n'
+        "程序在这次运行上判定命题。程序异常退出算作调用失败。"
     )
 
 
@@ -879,7 +896,16 @@ def io_align_check(state: dict, answer: str | None, attempt: int, config: dict) 
         try:
             inputs = IO.freeze_inputs(module, report["examples"], int(cfg["inputs"]))
             live = {pid: p for pid, p in props.items() if pid not in excluded}
-            kills = IO.mutation_kills(module, live, entities, report["examples"], report["example_of"], ex_props, cfg)
+            kills = IO.mutation_kills(
+                module,
+                live,
+                entities,
+                report["examples"],
+                report["example_of"],
+                ex_props,
+                cfg,
+                report.get("call_inputs"),
+            )
         finally:
             module.close()
     S.write_json(align / IO.INPUTS, inputs)
@@ -898,6 +924,7 @@ def io_align_check(state: dict, answer: str | None, attempt: int, config: dict) 
             "example_of": report["example_of"],
             "example_props": sorted(ex_props),
             "derived": report["derived"],
+            "call_inputs": report.get("call_inputs", {}),
             "kills": kills,
             "usable": usable,
             "inputs": len(inputs),

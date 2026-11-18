@@ -184,3 +184,74 @@ def test_runs_judge_the_formula_on_the_program(tmp_path, module, program, expect
     summary = RUN.summarize(recs, PROPS, frozen)["propositions"]
     assert summary["R1"]["result"] == expected
     assert summary["R2"].get("vacuous") is True  # 细则 11.12: it stopped no mutant
+
+
+CALL_MODULE = MODULE.replace(
+    "EXAMPLE_OF = {}",
+    textwrap.dedent("""
+    EXAMPLE_OF = {}
+
+    def call_input(name, args):
+        a = args[0]
+        return f"{len(a)}\\n{' '.join(map(str, a))}\\n"
+
+    def call_output(name, output_text):
+        try:
+            return int(output_text.strip())
+        except ValueError:
+            return {"无法读出": "不是整数"}
+    """),
+)
+
+
+def call_prop(pid: str, formula: str) -> dict:
+    d = decls()
+    d.category["smallest"], d.params["smallest"] = "接口", []
+    tree = F.parse(formula, d)
+    return {"id": pid, "source": "推理", "basis": "", "tree": tree, "formula": formula, "class": F.classify(tree)}
+
+
+@pytest.mark.parametrize(("program", "expected"), [("print(2)\n", M.PASSED), ("print(5)\n", M.CHECK_FAILED)])
+def test_call_propositions_run_the_program_once(tmp_path, program, expected):
+    (tmp_path / IO.MODULE).write_text(CALL_MODULE)
+    cfg = IO.settings({}, {"command": "python3 -I main.py"})
+    m = IO.Module(tmp_path / IO.MODULE, cfg)
+    props = {"R8": call_prop("R8", "`smallest`([5, 2, 7]) = 2"), "R9": call_prop("R9", "`smallest`([4]) = 4")}
+    try:
+        report = IO.trial(m, props, set(), REQ, set(), cfg)
+        assert report["problems"] == [] and report["unmapped"] == {} and report["contradicted"] == {}
+        examples = report["examples"]
+        kills = IO.mutation_kills(m, props, set(), examples, {}, set(), cfg, report["call_inputs"])
+        assert kills["R8"] > 0 and kills["R9"] == 0  # R9's input is not an example
+        run = tmp_path / "run"
+        S.ensure_private(run / "align")
+        shutil.copy(tmp_path / IO.MODULE, run / "align" / IO.MODULE)
+        S.write_json(run / "align" / IO.INPUTS, IO.freeze_inputs(m, examples, 5))
+    finally:
+        m.close()
+    w = tmp_path / "w"
+    w.mkdir()
+    (w / "main.py").write_text(program)
+    frozen = {
+        "kind": "io",
+        "checks": [],
+        "align_failures": {},
+        "excluded": {},
+        "io": {
+            "settings": {"command": "python3 -I main.py"},
+            "examples": examples,
+            "example_of": {},
+            "example_props": [],
+            "derived": [],
+            "kills": kills,
+            "call_inputs": report["call_inputs"],
+        },
+    }
+    out = RUN.summarize(IO.run(run, w, props, frozen, set(), {"budget": 600}), props, frozen)["propositions"]
+    assert out["R8"]["result"] == expected
+
+
+def test_a_call_the_module_cannot_map_is_set_aside(module):
+    props = {"R8": call_prop("R8", "`smallest`([5, 2, 7]) = 2"), **PROPS}
+    report = IO.trial(module, props, set(), REQ, set(), IO.settings({}, {}))
+    assert "R8" in report["unmapped"] and report["problems"] == []

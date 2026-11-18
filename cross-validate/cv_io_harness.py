@@ -53,6 +53,17 @@ def main() -> None:
                 item["trace"] = safe(mod.trace, it["input"], it["output"])
             items.append(item)
         out = {"items": items}
+    elif op == "call":
+        if not (hasattr(mod, "call_input") and hasattr(mod, "call_output")):
+            out = {"load_error": "缺少 call_input 或 call_output"}
+        else:
+            items = []
+            for it in req["items"]:
+                item = {"input": safe(mod.call_input, it["name"], it["args"])}
+                if it.get("output") is not None:
+                    item["value"] = safe(mod.call_output, it["name"], it["output"])
+                items.append(item)
+            out = {"items": items}
     else:
         out = {"load_error": f"unknown op {op}"}
     sys.stdout.write(json.dumps(out, ensure_ascii=False, allow_nan=False))

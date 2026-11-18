@@ -153,6 +153,50 @@ def judge(prop: dict, states: list[dict], entities: set[str], tolerance: float) 
     return {**r, "result": final.get(r["result"], r["result"])}
 
 
+# ---------------------------------------------------------------------------------------------------
+# 调用 propositions: a call is one run, its arguments an input text and its result read from the output
+# ---------------------------------------------------------------------------------------------------
+
+
+def calls_of(tree: dict) -> list[dict]:
+    return [n for n in F.walk(tree) if n["op"] == "call"]
+
+
+def call_key(n: dict) -> str:
+    return json.dumps([n["name"], [a.get("value") for a in n["args"]]], ensure_ascii=False, sort_keys=True)
+
+
+def call_items(props: dict[str, dict]) -> list[dict]:
+    """Every distinct call in the propositions, with literal arguments (细则 8.5 调用…得到)."""
+    seen: dict[str, dict] = {}
+    for p in props.values():
+        for n in calls_of(p["tree"]):
+            if all(a["op"] == "lit" for a in n["args"]):
+                seen.setdefault(call_key(n), {"name": n["name"], "args": [a["value"] for a in n["args"]]})
+    return list(seen.values())
+
+
+def substitute(n: dict, values: dict[str, tuple[str, object]]) -> dict:
+    """Calls replaced by what the run showed: ("value", v) or ("failed", None)."""
+    if n["op"] == "fails":
+        kind, _ = values[call_key(n["args"][0])]
+        return F.lit(kind == "failed")
+    if n["op"] == "call":
+        kind, v = values[call_key(n)]
+        if kind == "failed":
+            raise M.AlignError("调用失败了，没有结果")
+        return F.lit(v)
+    return {**n, "args": [substitute(a, values) for a in n.get("args", [])]}
+
+
+def judge_call(prop: dict, values: dict, tolerance: float) -> str:
+    try:
+        tree = substitute(prop["tree"], values)
+    except M.AlignError:
+        return M.CHECK_FAILED  # the program failed where the proposition expected a result
+    return M.judge(tree, [{"值": {}}], set(), tolerance=tolerance)["result"]
+
+
 def represented(tree: dict, states: list[dict]) -> bool:
     """表示(C) under io alignment: C has a value (or is a listed entity) in every state."""
     c = tree["args"][0]
@@ -306,7 +350,9 @@ def trial(module: Module, props: dict[str, dict], entities: set[str], requiremen
     examples, example_of = got["examples"]["ok"], got["example_of"]["ok"]
     out["examples"], out["example_of"] = examples, example_of
     out["problems"] += _example_lines_ok(examples, requirement)
-    for pid in sorted(ex_props):  # item 6
+    for pid in sorted(ex_props):  # item 6; a call names its own input
+        if calls_of(props[pid]["tree"]):
+            continue
         if example_of.get(pid) not in range(1, len(examples) + 1):
             out["unmapped"][pid] = "EXAMPLE_OF 没有给出它所说的示例，或者序号不存在"
     valid = module.call("valid", [a for a, _ in examples])
@@ -335,7 +381,7 @@ def trial(module: Module, props: dict[str, dict], entities: set[str], requiremen
         derived |= {k.split("(")[0] for k in item["derive"]["ok"].get("值", {})}
         derived |= set(item["derive"]["ok"].get("实体", {}))
         for pid, p in props.items():
-            if pid in out["unmapped"] or struct_kind(p) is not None:
+            if pid in out["unmapped"] or struct_kind(p) is not None or calls_of(p["tree"]):
                 continue
             if not _applies(pid, p, a, set(), ex_inputs, ex_props, example_of):
                 continue
@@ -347,6 +393,11 @@ def trial(module: Module, props: dict[str, dict], entities: set[str], requiremen
             if r in (M.VIOLATED, M.CHECK_FAILED):
                 out["contradicted"].setdefault(pid, f"在示例 {i} 上被判违反")
     out["derived"] = sorted(derived)
+    calling = {pid: p for pid, p in props.items() if calls_of(p["tree"])}
+    if calling:  # item 6 for calls: a call the module cannot map is set aside, like an unmapped example
+        trouble = _trial_calls(module, calling, examples, out, float(cfg["tolerance"]))
+        for pid in calling if trouble else ():
+            out["unmapped"].setdefault(pid, "；".join(trouble)[:300])
     gen = module.call("generate", [[i, 1 + (10 * i) // TRIAL_INPUTS] for i in range(TRIAL_INPUTS)])
     if "load_error" in gen:
         out["problems"].append(f"generate 出错：{gen['load_error']}")
@@ -377,11 +428,51 @@ def trial(module: Module, props: dict[str, dict], entities: set[str], requiremen
         out["problems"].append("生成的输入上 skip 出错")
         return out
     for pid, p in props.items():  # item 8
-        if pid in ex_props or struct_kind(p) is not None:
+        if pid in ex_props or struct_kind(p) is not None or calls_of(p["tree"]):
             continue
         if all(names_of(p["tree"]) & s for s in skipped):
             out["problems"].append(f"{pid} 在全部生成的输入上都因 skip 而无法判定")
     return out
+
+
+def _trial_calls(module: Module, calling: dict[str, dict], examples, out: dict, tolerance: float) -> list[str]:
+    """细则 11.12 for 调用 propositions: the module maps each call to an input text; where that is an example's
+    input, the example's output is the call's result and the proposition must hold."""
+    items = call_items(calling)
+    got = module.call("call", items)
+    if "load_error" in got:
+        return [
+            f"调用：有调用命题（{'、'.join(sorted(calling))}），模块要定义 call_input 和 call_output：{got['load_error']}"
+        ]
+    problems = []
+    by_input = {norm_input(a): b for a, b in examples}
+    known: dict[str, tuple[str, object]] = {}
+    asks = []
+    for it, g in zip(items, got["items"], strict=False):
+        if "error" in g["input"] or not isinstance(g["input"].get("ok"), str):
+            problems.append(f"调用：call_input({it['name']}, …) 出错：{g['input'].get('error', '应返回字符串')}")
+            continue
+        it["input"] = g["input"]["ok"]
+        if norm_input(it["input"]) in by_input:
+            asks.append({**it, "output": by_input[norm_input(it["input"])]})
+    if problems:
+        return problems
+    if asks:
+        vals = module.call("call", asks)
+        for it, g in zip(asks, vals.get("items", []), strict=False):
+            v = g.get("value", {})
+            if "error" in v or (isinstance(v.get("ok"), dict) and "无法读出" in v["ok"]):
+                problems.append(f"调用：示例输出上 call_output 读不出结果：{v.get('error') or v['ok']}")
+                continue
+            known[json.dumps([it["name"], it["args"]], ensure_ascii=False, sort_keys=True)] = ("value", v["ok"])
+    for pid, p in calling.items():
+        keys = {call_key(n) for n in calls_of(p["tree"])}
+        if keys <= set(known) and judge_call(p, known, tolerance) in (M.VIOLATED, M.CHECK_FAILED):
+            out["contradicted"].setdefault(pid, "在示例上被判违反")
+    out["call_inputs"] = {
+        json.dumps([i["name"], i["args"]], ensure_ascii=False, sort_keys=True): i["input"] for i in items
+    }
+    return problems
 
 
 def freeze_inputs(module: Module, examples: list[list[str]], n: int) -> list[str]:
@@ -412,7 +503,7 @@ def mutants(output: str, others: list[str], limit: int) -> list[str]:
 
 
 def mutation_kills(module: Module, props: dict[str, dict], entities: set[str], examples, example_of,
-                   ex_props: set[str], cfg: dict) -> dict[str, int]:  # fmt: skip
+                   ex_props: set[str], cfg: dict, call_inputs: dict | None = None) -> dict[str, int]:  # fmt: skip
     """细则 11.12 变异对照: how many wrong outputs on the examples each proposition stops."""
     kills = dict.fromkeys(props, 0)
     ex_inputs = {i: norm_input(a) for i, (a, _) in enumerate(examples, 1)}
@@ -422,13 +513,31 @@ def mutation_kills(module: Module, props: dict[str, dict], entities: set[str], e
         items += [{"input": a, "output": m} for m in mutants(b, others, int(cfg["mutants"]))]
     if not items:
         return kills
+    calling = {pid: p for pid, p in props.items() if calls_of(p["tree"])}
+    if calling and call_inputs:
+        by_input = {norm_input(t): k for k, t in call_inputs.items()}
+        asks = [dict(it, key=by_input[norm_input(it["input"])]) for it in items if norm_input(it["input"]) in by_input]
+        reqs = [{"name": json.loads(a["key"])[0], "args": json.loads(a["key"])[1], "output": a["output"]} for a in asks]
+        vals = module.call("call", reqs) if reqs else {"items": []}
+        for a, g in zip(asks, vals.get("items", []), strict=False):
+            v = g.get("value", {})
+            if "error" in v or (isinstance(v.get("ok"), dict) and "无法读出" in v["ok"]):
+                continue
+            known = {a["key"]: ("value", v["ok"])}
+            for pid, p in calling.items():
+                if {call_key(n) for n in calls_of(p["tree"])} <= set(known) and judge_call(
+                    p, known, float(cfg["tolerance"])
+                ) in (M.VIOLATED, M.CHECK_FAILED):
+                    kills[pid] += 1
     obs = module.call("observe", items)
     for it, item in zip(items, obs.get("items", []), strict=False):
         states, _, _ = build_trace(item)
         if states is None:
             continue
         for pid, p in props.items():
-            if struct_kind(p) is not None or not _applies(pid, p, it["input"], set(), ex_inputs, ex_props, example_of):
+            if struct_kind(p) is not None or calls_of(p["tree"]):
+                continue
+            if not _applies(pid, p, it["input"], set(), ex_inputs, ex_props, example_of):
                 continue
             try:
                 r = judge(p, states, entities, float(cfg["tolerance"]))["result"]
@@ -502,6 +611,8 @@ def run(run_dir: Path, w: Path, props: dict[str, dict], frozen: dict, entities: 
                 continue
             skipped = set(item["skip"]["ok"] or [])
             for pid, p in live.items():
+                if calls_of(p["tree"]):
+                    continue
                 if struct_kind(p) is not None:
                     if struct_kind(p) == "represents":
                         shown[pid].append(states)
@@ -521,6 +632,7 @@ def run(run_dir: Path, w: Path, props: dict[str, dict], frozen: dict, entities: 
                 cex = {"run": n, "result": r["result"], "input": inp[:2000], "output": output[:2000],
                        "last_states": states[: r["state"] + 1][-3:]}  # fmt: skip
                 _record(recs[pid], verdicts[pid], r["result"], cex)
+        _run_calls(live, recs, verdicts, io.get("call_inputs") or {}, module, wcopy / "w", cfg)
     finally:
         module.close()
     for pid, p in live.items():
@@ -547,6 +659,54 @@ def run(run_dir: Path, w: Path, props: dict[str, dict], frozen: dict, entities: 
             rec["untested"] = "在示例的变异输出上一个也没有拦下（细则 11.12）"
     shutil.rmtree(wcopy, ignore_errors=True)
     return list(recs.values())
+
+
+def _run_calls(live, recs, verdicts, call_inputs: dict, module: Module, w: Path, cfg: dict) -> None:
+    """Each 调用 proposition: run the program once per call on the module's input text (细则 11.12)."""
+    calling = {pid: p for pid, p in live.items() if calls_of(p["tree"])}
+    values: dict[str, tuple[str, object]] = {}
+    shown: dict[str, dict] = {}
+    for key in sorted({call_key(n) for p in calling.values() for n in calls_of(p["tree"])}):
+        if key not in call_inputs:
+            continue
+        inp = call_inputs[key]
+        out = box([(w, "/w")], ["/bin/sh", "-c", cfg["command"]], inp.encode(), float(cfg["timeout"]), cfg)
+        output = out["stdout"].decode("utf-8", "replace")
+        shown[key] = {"input": inp[:2000], "output": output[:2000]}
+        if out["timeout"]:
+            values[key] = ("timeout", None)
+            continue
+        if out["exit"] != 0:
+            values[key] = ("failed", None)
+            shown[key]["why"] = f"退出码 {out['exit']}：{_text(out['stderr'], 300)}"
+            continue
+        name, args = json.loads(key)
+        got = module.call("call", [{"name": name, "args": args, "output": output}])
+        v = ((got.get("items") or [{}])[0]).get("value", {"error": got.get("load_error", "模块没有回答")})
+        if "error" in v:
+            values[key] = ("align", v["error"])
+        elif isinstance(v.get("ok"), dict) and "无法读出" in v["ok"]:
+            values[key] = ("unreadable", v["ok"]["无法读出"])
+        else:
+            values[key] = ("value", v["ok"])
+    for pid, p in calling.items():
+        keys = [call_key(n) for n in calls_of(p["tree"])]
+        rec = recs[pid]
+        missing = [k for k in keys if k not in values]
+        bad = [values[k] for k in keys if k in values and values[k][0] in ("timeout", "unreadable", "align")]
+        cex = {"run": "调用", "result": None, **shown.get(keys[0], {"input": "", "output": ""})}
+        if missing:
+            _record(rec, verdicts[pid], M.ALIGN_FAILED, None, reason="模块没有给出这次调用对应的输入")
+        elif bad:
+            kind, why = bad[0]
+            res = M.ALIGN_FAILED if kind == "align" else M.CHECK_FAILED
+            cex.update(result=res, why={"timeout": "超时", "unreadable": f"输出无法读出：{why}"}.get(kind, why))
+            _record(rec, verdicts[pid], res, cex, reason=why if kind == "align" else None)
+        else:
+            r = judge_call(p, values, float(cfg["tolerance"]))
+            rec["judged"] += 1
+            cex["result"] = r
+            _record(rec, verdicts[pid], r, cex)
 
 
 def _record(rec: dict, verdicts: list[str], result: str, cex: dict | None, reason: str | None = None) -> None:

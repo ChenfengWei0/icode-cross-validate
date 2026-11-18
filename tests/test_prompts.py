@@ -77,6 +77,7 @@ def test_placeholders_filled():
         "PROTOCOL": "io",
         "EXAMPLE_PROPS": "R1",
         "ORIGINAL": "o",
+        "CALLS": "c",
     }
     for path in PROMPTS.glob("*.md"):
         text = FLOW.prompt(path.stem, **values)
