@@ -21,6 +21,7 @@ import hashlib
 import json
 import os
 import random
+import re
 import shutil
 import sys
 import threading
@@ -35,6 +36,7 @@ OUT = Path(os.environ.get("CV_LCB_OUT", DATA / "cv"))
 MODEL = "claude-haiku-5-5"
 MAX_TOKENS = 64000  # 32000 cut off about 5% of subtask and alignment answers in dev round 2
 KIND = os.environ.get("CV_BENCH_KIND", "lcb")
+POP_EXAMPLES = os.environ.get("CV_BENCH_POP") == "examples"  # BENCHMARK_EX.md
 MULTI_ANSWER = ("abc396_e", "abc397_d", "abc398_f", "arc185_c", "arc190_a", "arc191_c")  # L2
 SITE = Path.home() / ".local/lib/python3.12/site-packages"
 DIST = "/usr/local/lib/python3.12/dist-packages"
@@ -321,6 +323,84 @@ def _delta(rows: list[dict], key: str) -> float | None:
     return sum(r["ok"] for r in passed) / len(passed) - sum(r["ok"] for r in rows) / len(rows)
 
 
+def _io_runs(r: dict) -> dict:
+    return S.read_json(Path(r["run"]) / "io-runs.json") or {} if r.get("run") else {}
+
+
+def _block_reason(r: dict) -> str:
+    """BENCHMARK_EX.md X7 拦下的原因: a proposition, else a timeout, a crash, unreadable output, else other."""
+    t = _io_runs(r)
+    for key, name in (("violated", "命题"), ("timeout", "超时"), ("crash", "崩溃"), ("unreadable", "读不出")):
+        if t.get(key):
+            return name
+    return "其他"
+
+
+def _permutation_p(rows: list[dict], n: int = 10000, seed: int = 20261118) -> float | None:
+    """X7: shuffle the certified labels within each problem (counts kept); share of shuffles with delta >= observed."""
+    obs = _delta(rows, "cv")
+    if obs is None:
+        return None
+    by_q: dict[str, list[dict]] = {}
+    for r in rows:
+        by_q.setdefault(r["qid"], []).append(r)
+    rng = random.Random(seed)  # noqa: S311 — resampling, not security
+    hits = 0
+    for _ in range(n):
+        pick = []
+        for rs in by_q.values():
+            labels = [r["cv"] for r in rs]
+            rng.shuffle(labels)
+            pick += [{**r, "cv": c} for r, c in zip(rs, labels, strict=True)]
+        d = _delta(pick, "cv")
+        hits += d is not None and d >= obs - 1e-12
+    return hits / n
+
+
+def _mantel_haenszel(rows: list[dict]) -> tuple[float | None, int]:
+    """X7 题内分层: risk difference of correctness, certified minus not, over problems with both kinds and both
+    outcomes among their E samples."""
+    by_q: dict[str, list[dict]] = {}
+    for r in rows:
+        by_q.setdefault(r["qid"], []).append(r)
+    num = den = 0.0
+    k = 0
+    for rs in by_q.values():
+        a = [r for r in rs if r["cv"]]
+        b = [r for r in rs if not r["cv"]]
+        if not a or not b or len({r["ok"] for r in rs}) < 2:
+            continue
+        k += 1
+        w = len(a) * len(b) / len(rs)
+        num += w * (sum(r["ok"] for r in a) / len(a) - sum(r["ok"] for r in b) / len(b))
+        den += w
+    return (num / den if den else None), k
+
+
+def _ex_analysis(rows: list[dict]) -> None:
+    """BENCHMARK_EX.md X7, on population E (usable problems unless said otherwise)."""
+    wrong = [r for r in rows if not r["ok"]]
+    blocked = [r for r in wrong if r["cv_failed"]]
+    reasons: dict[str, int] = {}
+    for r in blocked:
+        reasons[_block_reason(r)] = reasons.get(_block_reason(r), 0) + 1
+    print(f"  wrong programs blocked, by reason: {reasons}")
+    p = _permutation_p(rows)
+    print(f"  within-problem permutation p (one-sided): {p}")
+    mh, k = _mantel_haenszel(rows)
+    print(f"  Mantel-Haenszel risk difference {mh} over {k} mixed problems")
+    uniq = {(r["qid"], re.sub(r"\s+", "", r["code"])) for r in wrong}
+    print(f"  wrong programs {len(wrong)} on {len({r['qid'] for r in wrong})} problems; distinct code {len(uniq)}")
+    soft = [{**r, "cv": r["cv"] or (r["cv_failed"] and _block_reason(r) in ("超时", "崩溃"))} for r in rows]
+    print(f"  delta if timeouts and crashes did not block: {_delta(soft, 'cv')}")
+    ran = [r for r in rows if r.get("run") and not _io_runs(r).get("timeout") and not _io_runs(r).get("crash")]
+    if ran:
+        cv = [r for r in ran if r["cv"]]
+        base = sum(r["ok"] for r in ran) / len(ran)
+        prec = sum(r["ok"] for r in cv) / len(cv) if cv else None
+        print(f"  on E and run-only passed ({len(ran)}): run-only precision {base:.3f}, cv precision {prec}")
+
+
 def summary(ids_file: str) -> None:
     ids = [q for q in Path(ids_file).read_text(encoding="utf-8").split() if q]
     if KIND == "cf":  # K4 自检: problems whose tests fail the self-check are left out
@@ -331,14 +411,19 @@ def summary(ids_file: str) -> None:
         for f in samples(q):
             g = S.read_json(DATA / "grades" / f"{f.stem}.json")
             c = S.read_json(OUT / "check" / f"{f.stem}.json")
-            if g is None or c is None or "NO_CODE" in g["verdicts"]:
+            if g is None or "NO_CODE" in g["verdicts"]:
                 continue
+            if c is None:  # no preparation (time limit) or not checked: no conclusion, never dropped silently
+                if not (OUT / "prep" / f"{q}.json").exists() and not POP_EXAMPLES:
+                    continue
+                c = {"conclusion": "无结论", "usable": False}
             j = S.read_json(OUT / "judge" / f"{f.stem}.json") or {}
             rows.append({
                 "qid": q, "sample": f.stem, "ok": g.get("long_ok") is True if KIND == "cf" else g["ok"], "strict_ok": g["ok"],
                 "ok_bound": g.get("long_ok") in (True, None) if KIND == "cf" else g["ok"],
                 "cv": c["conclusion"] == "比对通过", "cv_failed": c["conclusion"] == "比对未通过",
                 "usable": c.get("usable", False), "judge": j.get("yes"), "examples": examples_pass(q, f, g),
+                "run": c.get("run"), "code": f.read_text(encoding="utf-8", errors="replace"),
             })  # fmt: skip
     if not rows:
         print("no rows")
@@ -372,7 +457,13 @@ def summary(ids_file: str) -> None:
             d = sum(r["ok"] for r in exc) / len(exc) - sum(r["ok"] for r in ex) / len(ex)
             print(f"  among samples passing the examples: cv precision - examples precision = {d:+.3f}")
 
+    if POP_EXAMPLES:  # BENCHMARK_EX.md X1: only the programs that pass every example (population E)
+        rows = [r for r in rows if r["examples"]]
+        usable = [r for r in rows if r["usable"]]
+        print(f"population E: {len(rows)} samples on {len({r['qid'] for r in rows})} problems")
     block("usable problems (main, L7)", usable)
+    if POP_EXAMPLES:
+        _ex_analysis(usable)
     block("all problems", rows)
     if KIND == "cf":  # K4: unknowns counted right, as a bound; and the 20-second "correct"
         block("usable, unknown counted right (bound)", [{**r, "ok": r["ok_bound"]} for r in usable])
