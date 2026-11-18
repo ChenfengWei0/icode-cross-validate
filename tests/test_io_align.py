@@ -192,6 +192,10 @@ def test_runs_judge_the_formula_on_the_program(tmp_path, module, program, expect
     summary = RUN.summarize(recs, PROPS, frozen)["propositions"]
     assert summary["R1"]["result"] == expected
     assert summary["R2"].get("vacuous") is True  # 细则 11.12: it stopped no mutant
+    tally = S.read_json(run / "io-runs.json")  # 细则 11.12 运行统计
+    assert tally["inputs"] > 0
+    assert (tally["violated"] > 0) == (expected == M.VIOLATED)
+    assert (tally["crash"] > 0) == (program.startswith("raise"))
 
 
 CALL_MODULE = MODULE.replace(

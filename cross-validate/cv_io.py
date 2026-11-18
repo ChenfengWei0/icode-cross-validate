@@ -629,6 +629,9 @@ def run(run_dir: Path, w: Path, props: dict[str, dict], frozen: dict, entities: 
     shutil.copytree(w, wcopy / "w", ignore=shutil.ignore_patterns(".git", "__pycache__"), symlinks=True)
     module = Module(align / MODULE, cfg)
     cut = None
+    # 细则 11.12 运行统计: why runs failed, so a reader can tell propositions from crashes and timeouts
+    tally = {"inputs": 0, "timeout": 0, "crash": 0, "unreadable": 0, "align": 0, "violated": 0}
+    violated: set[int] = set()  # inputs on which some proposition was violated
     try:
         for n, inp in enumerate(inputs):
             if time.monotonic() >= deadline:
@@ -637,7 +640,9 @@ def run(run_dir: Path, w: Path, props: dict[str, dict], frozen: dict, entities: 
             out = box(
                 [(wcopy / "w", "/w")], ["/bin/sh", "-c", cfg["command"]], inp.encode(), float(cfg["timeout"]), cfg
             )
+            tally["inputs"] += 1
             if out["exit"] != 0:
+                tally["timeout" if out["timeout"] else "crash"] += 1
                 why = "超时" if out["timeout"] else f"退出码 {out['exit']}"
                 cex = {"run": n, "result": M.CHECK_FAILED, "input": inp[:2000], "why": why,
                        "stderr": _text(out["stderr"]), "stdout": _text(out["stdout"])}  # fmt: skip
@@ -660,6 +665,7 @@ def run(run_dir: Path, w: Path, props: dict[str, dict], frozen: dict, entities: 
                 if err is None and "error" in item["skip"]:
                     err = f"skip 出错：{item['skip']['error']}"
             if err or unreadable:
+                tally["align" if err else "unreadable"] += 1
                 res = M.ALIGN_FAILED if err else M.CHECK_FAILED
                 cex = {"run": n, "result": res, "input": inp[:2000], "output": output[:2000],
                        "why": err or f"输出无法读出：{unreadable}"}  # fmt: skip
@@ -688,10 +694,14 @@ def run(run_dir: Path, w: Path, props: dict[str, dict], frozen: dict, entities: 
                     recs[pid]["triggered"] = recs[pid].get("triggered", False) or fired
                 cex = {"run": n, "result": r["result"], "input": inp[:2000], "output": output[:2000],
                        "last_states": states[: r["state"] + 1][-3:]}  # fmt: skip
+                if r["result"] in (M.VIOLATED, M.CHECK_FAILED):
+                    violated.add(n)
                 _record(recs[pid], verdicts[pid], r["result"], cex)
         _run_calls(live, recs, verdicts, io.get("call_inputs") or {}, module, wcopy / "w", cfg)
     finally:
         module.close()
+    tally["violated"] = len(violated)
+    S.write_json(Path(run_dir) / "io-runs.json", tally)
     for pid, p in live.items():
         rec = recs[pid]
         kind = struct_kind(p)
