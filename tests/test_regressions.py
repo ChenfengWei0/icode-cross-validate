@@ -927,8 +927,8 @@ def test_unstated_reading_is_marked():
     assert out["R4"]["problems"] == [] and "unstated" not in out["R4"]
 
 
-def test_flagged_checks_cover_nothing(decls):
-    """细则 11.2 11.6 a check on inputs the requirement leaves open is extra; it never stands in for a check."""
+def test_flagged_checks_still_count(decls):
+    """细则 11.2 11.6 13.8 a check the alignment agent marks unstated_inputs is a check like any other."""
     import cv_align as A
 
     data = {
@@ -943,13 +943,12 @@ def test_flagged_checks_cover_nothing(decls):
     }
     out = A.validate(data, props(decls), LIMITS)
     assert any("unstated_inputs" in e for e in out["format_errors"])
-    assert "unstated_inputs" in out["align_failures"]["R1"]
-    assert "R9" not in out["align_failures"] and "R5" not in out["align_failures"]
+    assert not {"R1", "R9", "R5"} & set(out["align_failures"])
     assert [c["unstated_inputs"] for c in out["checks"]] == [True, False, False, True]
 
 
 def test_what_the_requirement_leaves_open_is_for_a_person(decls, tmp_path):
-    """细则 13.8 14.2 17.11 a marked reading or an input the requirement leaves open is shown, not counted."""
+    """细则 13.8 14.2 17.11 the subtask's marked reading is shown, not counted; the alignment agent's mark still counts."""
     import cv_report as REPORT
 
     run, w = tmp_path / "run", tmp_path / "w"
@@ -965,11 +964,13 @@ def test_what_the_requirement_leaves_open_is_for_a_person(decls, tmp_path):
     ]
     out = RUN.run_checks(run, w, p, frozen_for(checks), ENT, LIMITS)["propositions"]
     assert out["R1"]["result"] == M.CHECK_FAILED and out["R1"]["unstated"] is True
-    assert out["R9"]["result"] == M.PASSED and out["R9"]["unstated_inputs"][0]["result"] == M.CHECK_FAILED
+    assert out["R9"]["result"] == M.CHECK_FAILED and out["R9"]["unstated_inputs"][0]["result"] == M.CHECK_FAILED
     assert "unstated" not in out["R9"] and "unstated_inputs" not in out["R5"]
     behaviour = [{"id": pid, "class": "具体事实", **p[pid]} for pid in ("R1", "R5", "R9")]
     data = {"results": out, "stats": {"submitted": 3, "discarded": 0}, "accepted": behaviour}
-    assert REPORT.conclusion(data, 0.5)[0] == REPORT.PASSED
+    assert REPORT.conclusion(data, 0.5)[0] == REPORT.FAILED  # the alignment agent's mark does not excuse R9
+    out["R9"]["result"] = M.PASSED
+    assert REPORT.conclusion(data, 0.5)[0] == REPORT.PASSED  # the subtask's 〔需求未说明〕 on R1 is not counted
 
     accepted = [
         {"id": pid, "source": "推理", "basis": "〔存在〕〔需求未说明〕没说", "sentence": f"句{pid}", "formula": "f"}
@@ -982,7 +983,7 @@ def test_what_the_requirement_leaves_open_is_for_a_person(decls, tmp_path):
     S.write_json(run / "results.json", {"propositions": out})
     text = REPORT.render(REPORT.build(run, {}, {"max_discard_ratio": 0.5}))
     assert "## 需要人确认" in text and "**比对通过**" in text and "需求未说明 1 条" in text
-    assert "推理（需求未说明）" in text and "超出需求的输入的检查 1 项" in text
+    assert "推理（需求未说明）" in text and "超出需求的输入的检查 1 项，结果照常计入" in text
 
     # An ordinary failure still decides.
     out["R5"]["result"] = M.VIOLATED

@@ -304,9 +304,10 @@ def run_checks(run: Path, w: Path, props: dict[str, dict], frozen: dict, entitie
             rec["timeouts"] = timeouts
     by_prop: dict[str, dict] = {}
     for pid in props:
-        # 细则 13.8: checks on inputs the requirement does not define are shown, not taken into the worst.
+        # 细则 13.8: checks the alignment agent marked unstated_inputs are listed for a person and still counted:
+        # the alignment agent sees the code, so its marks must not decide which checks count.
         aside = [r for r in results if r["proposition"] == pid and r.get("unstated_inputs")]
-        mine = [r for r in results if r["proposition"] == pid and not r.get("unstated_inputs")]
+        mine = [r for r in results if r["proposition"] == pid]
         # 细则 13.3: a coverage failure takes part in the worst; it does not hide what a check found.
         if pid in frozen["align_failures"]:
             mine.append({"result": M.ALIGN_FAILED, "reason": frozen["align_failures"][pid], "counterexample": None})

@@ -115,11 +115,10 @@ def validate(data, props: dict[str, dict], limits: dict, entities: set[str] | fr
         )
     failures: dict[str, str] = {}
     for pid, prop in props.items():
-        # 细则 11.6, 13.8: checks on inputs the requirement does not define are extra; they cover nothing.
-        mine = [c for c in checks if c["proposition"] == pid and not c["unstated_inputs"]]
+        # 细则 11.6: every proposition needs a check; checks marked unstated_inputs count like the others (13.8).
+        mine = [c for c in checks if c["proposition"] == pid]
         if not mine:
-            others = any(c["proposition"] == pid for c in checks)
-            failures[pid] = "只有超出需求的输入的检查（unstated_inputs）" if others else "没有任何检查"
+            failures[pid] = "没有任何检查"
         elif prop["class"] == "时序" and not any(c["kind"] in PROGRAM_JUDGED for c in mine):
             failures[pid] = "时序命题既没有 trace 检查，也没有 verify 检查（细则 11.5）"
     return {"format_errors": errors, "checks": checks, "bindings": bindings, "align_failures": failures}
