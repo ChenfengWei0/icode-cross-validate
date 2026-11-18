@@ -81,6 +81,7 @@ def module(tmp_path):
 
 
 def test_trial_passes_on_a_faithful_module(module):
+    """细则 11.12 冻结前试跑: a faithful module passes the trial on the examples."""
     report = IO.trial(module, PROPS, set(), REQ, set(), IO.settings({}, {}))
     assert report["problems"] == [], report
     assert report["contradicted"] == {}
@@ -88,6 +89,7 @@ def test_trial_passes_on_a_faithful_module(module):
 
 
 def test_trial_reports_a_contradiction_on_the_examples(module):
+    """细则 11.12 试跑第 5 项: a proposition violated on an example is reported."""
     bad = {"R3": prop("R3", "G(答案 > 最小值)")}
     report = IO.trial(module, bad, set(), REQ, set(), IO.settings({}, {}))
     assert "R3" in report["contradicted"]
@@ -110,6 +112,7 @@ def test_mutants_change_one_number_and_cut():
 
 
 def test_mutation_kills_only_count_discriminating_propositions(module):
+    """细则 11.12 变异对照: only propositions that stop a wrong output count."""
     examples = [["3\n5 2 7\n", "2\n"]]
     kills = IO.mutation_kills(module, PROPS, set(), examples, {}, set(), IO.settings({}, {}))
     assert kills["R1"] > 0
@@ -123,6 +126,7 @@ def test_derive_and_trace_must_not_give_the_same_key():
 
 
 def test_presumed_results_are_final_at_the_end_of_a_run():
+    """细则 11.12 轨迹的结束就是运行的结束."""
     p = prop("R5", "F(答案 = 1)")
     assert IO.judge(p, [{"值": {"答案": 2}}], set(), 1e-6)["result"] == M.VIOLATED
     assert IO.judge(prop("R6", "G(答案 = 2)"), [{"值": {"答案": 2}}], set(), 1e-6)["result"] == M.SATISFIED
@@ -197,7 +201,7 @@ CALL_MODULE = MODULE.replace(
 
     def call_input(name, args):
         a = args[0]
-        return f"{len(a)}\\n{' '.join(map(str, a))}\\n"
+        return f"{len(a)}\\n{'  '.join(map(str, a))}\\n"  # spaced differently from the example
 
     def call_output(name, output_text):
         try:

@@ -101,6 +101,12 @@ def norm_input(text: str) -> str:
     return "\n".join(line.rstrip() for line in text.rstrip().splitlines())
 
 
+def call_match(text: str) -> str:
+    """细则 11.12: a call's input equals an example's input when they agree up to whitespace; `[1, 2]` and `[1,2]`
+    are the same arguments."""
+    return re.sub(r"\s+", "", text)
+
+
 def build_trace(item: dict) -> tuple[list[dict] | None, str | None, str | None]:
     """(states, unreadable reason, alignment error) from one observed item; derive merged in."""
     for part in ("derive", "trace"):
@@ -447,7 +453,7 @@ def _trial_calls(module: Module, calling: dict[str, dict], examples, out: dict, 
             f"调用：有调用命题（{'、'.join(sorted(calling))}），模块要定义 call_input 和 call_output：{got['load_error']}"
         ]
     problems = []
-    by_input = {norm_input(a): b for a, b in examples}
+    by_input = {call_match(a): b for a, b in examples}
     known: dict[str, tuple[str, object]] = {}
     asks = []
     for it, g in zip(items, got["items"], strict=False):
@@ -455,8 +461,8 @@ def _trial_calls(module: Module, calling: dict[str, dict], examples, out: dict, 
             problems.append(f"调用：call_input({it['name']}, …) 出错：{g['input'].get('error', '应返回字符串')}")
             continue
         it["input"] = g["input"]["ok"]
-        if norm_input(it["input"]) in by_input:
-            asks.append({**it, "output": by_input[norm_input(it["input"])]})
+        if call_match(it["input"]) in by_input:
+            asks.append({**it, "output": by_input[call_match(it["input"])]})
     if problems:
         return problems
     if asks:
@@ -517,8 +523,8 @@ def mutation_kills(module: Module, props: dict[str, dict], entities: set[str], e
         return kills
     calling = {pid: p for pid, p in props.items() if calls_of(p["tree"])}
     if calling and call_inputs:
-        by_input = {norm_input(t): k for k, t in call_inputs.items()}
-        asks = [dict(it, key=by_input[norm_input(it["input"])]) for it in items if norm_input(it["input"]) in by_input]
+        by_input = {call_match(t): k for k, t in call_inputs.items()}
+        asks = [dict(it, key=by_input[call_match(it["input"])]) for it in items if call_match(it["input"]) in by_input]
         reqs = [{"name": json.loads(a["key"])[0], "args": json.loads(a["key"])[1], "output": a["output"]} for a in asks]
         vals = module.call("call", reqs) if reqs else {"items": []}
         for a, g in zip(asks, vals.get("items", []), strict=False):

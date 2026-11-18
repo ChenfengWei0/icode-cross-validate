@@ -1,7 +1,7 @@
 # 标准核验结果
 
 由 `python3 scripts/check_standards.py` 生成，标准见 `STANDARDS.md`。
-合计：通过 141，未通过 0，跳过 0，人工 1。
+合计：通过 143，未通过 0，跳过 0，人工 1。
 
 
 ## D：文档要求
@@ -95,6 +95,7 @@
 | 细则 11.9 | 通过 | 1 个测试：test_frozen_checks_run |
 | 细则 11.10 | 通过 | 2 个测试：test_alignment_prompt_asks_for_strict_checks_that_reach_the_hard_cases、test_prompts_ask_for_reachable_states_and_meaning_not_names |
 | 细则 11.11 | 通过 | 12 个测试：test_fragment、test_generated_code_agrees_with_the_checker、test_absent_individual_makes_atoms_false、test_cbmc_decides_for_every_input 等 |
+| 细则 11.12 | 通过 | 4 个测试：test_trial_passes_on_a_faithful_module、test_trial_reports_a_contradiction_on_the_examples、test_mutation_kills_only_count_discriminating_propositions、test_presumed_results_are_final_at_the_end_of_a_run |
 | 细则 12.1 | 通过 | 1 个测试：test_trace_format |
 | 细则 12.2 | 通过 | 2 个测试：test_time_convention、test_prompt_shows_where_an_event_goes |
 | 细则 12.3 | 通过 | 5 个测试：test_values、test_no_contradiction_is_true、test_big_integers_exact、test_missing_key_after_violation 等 |
@@ -137,6 +138,7 @@
 | 细则 17.10 | 通过 | 1 个测试：test_state_dependent_needs_a_time |
 | 细则 17.11 | 通过 | 偏离说明，核验其实现细则 13.8、14.2 |
 | 细则 17.12 | 通过 | 1 个测试：test_conflict_group_fails_only_when_every_side_fails |
+| 细则 17.13 | 通过 | 偏离说明，核验其实现细则 11.12 |
 
 ## I：iCode 扩展规范
 
@@ -160,8 +162,8 @@
 | --- | --- | --- |
 | P-1 | 通过 | 只导入标准库 |
 | P-2 | 通过 | ruff target-version = py310，workflow 声明 requires-python >=3.10 |
-| P-3 | 通过 | ruff check：All checks passed!；ruff format：65 files already formatted |
-| P-4 | 通过 | 插件本体 327 KB；含 iCode 版权声明的文件：无 |
-| P-5 | 通过 | pytest：280 passed in 218.38s (0:03:38) |
-| P-6 | 通过 | 重建以来 40 个提交 |
+| P-3 | 通过 | ruff check：All checks passed!；ruff format：74 files already formatted |
+| P-4 | 通过 | 插件本体 381 KB；含 iCode 版权声明的文件：无 |
+| P-5 | 通过 | pytest：297 passed in 227.64s (0:03:47) |
+| P-6 | 通过 | 重建以来 49 个提交 |
 | P-7 | 通过 | 含令牌或密钥的文件：无 |
