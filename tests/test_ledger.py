@@ -70,7 +70,10 @@ def test_consolidation_ok():
 def test_consolidation_errors():
     """细则 15.4 every rule the program checks."""
     bad = answer(
-        [{"text": "会员 VIP 打九折", "quotes": [{"from": "M4", "text": "会员打 9 折"}]}, {"text": "空", "quotes": []}],
+        [
+            {"text": "会员 vip_rate 打九折", "quotes": [{"from": "M4", "text": "会员打 9 折"}]},
+            {"text": "空", "quotes": []},
+        ],
         {"M1": "需求", "M2": "闲聊", "M3": "更正 M5", "M4": "补充", "M5": "已被更正"},
     )
     _, errors = L.check_consolidation(bad, LEDGER)
@@ -82,7 +85,7 @@ def test_consolidation_errors():
         "不是更早的消息",
         "M1（需求）没有被 R 的任何一条引用",
         "没有后来的更正、隐含更正或撤销指向它",
-        "VIP 没有出现在它的原话片段中",
+        "vip_rate 没有出现在它的原话片段中",
     ):
         assert expect in joined, expect
 
@@ -110,6 +113,18 @@ def test_implicit_correction():
     _, errors = L.check_consolidation(answer(ok_entries := [{"text": "x", "quotes": [{"from": "M2", "text": "5"}]}],
                                              {"M1": "已被更正", "M2": "隐含更正"}), ledger)  # fmt: skip
     assert any("去向不合法" in e for e in errors) and ok_entries
+
+
+def test_message_ids_are_not_implementation_names():
+    """细则 15.4: a requirement may say which message's examples hold; M2 is the ledger's label."""
+    ledger = msgs("Solve it. Examples below.", "Use these examples instead.")
+    ok = answer(
+        [{"text": "Use the examples of M2 instead of M1.", "quotes": [{"from": "M2", "text": "Use these examples"}]},
+         {"text": "Solve it.", "quotes": [{"from": "M1", "text": "Solve it."}]}],
+        {"M1": "需求", "M2": "补充"},
+    )  # fmt: skip
+    _, errors = L.check_consolidation(ok, ledger)
+    assert errors == []
 
 
 def test_ledger_chars_counts_what_the_subtask_reads():

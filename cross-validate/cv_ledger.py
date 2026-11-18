@@ -16,6 +16,7 @@ DISPOSITIONS = ("需求", "补充", "更正", "隐含更正", "撤销", "已被�
 MUST_QUOTE = ("需求", "补充", "更正", "隐含更正")
 POINTING = ("更正", "隐含更正", "撤销")  # 细则 15.4: dispositions that name an earlier message
 ASCII_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]+")
+IDENTIFIER = re.compile(r"_|\d|[a-z][A-Z]")  # 细则 15.4: snake_case, a digit, or camelCase
 FENCE = re.compile(r"(```|~~~).*?(?:\1|\Z)", re.DOTALL)
 STACK_LINE = re.compile(
     r"(Traceback \(most recent call last\)|^\s*File \".*\", line \d+|^\s*at \S.*:\d+|^\s*\w*(Error|Exception): ).*$",
@@ -172,7 +173,11 @@ def check_consolidation(answer: str, messages: list[dict]) -> tuple[dict | None,
             quoted.add(q["from"])
             good.append({"from": q["from"], "text": q["text"]})
         joined = " ".join(q["text"] for q in good)
-        names = sorted(set(ASCII_NAME.findall(item["text"])))
+        # 细则 15.4: identifier-like words only (plain English words are not names); message ids (M3) are the
+        # ledger's own labels
+        names = sorted(
+            n for n in set(ASCII_NAME.findall(item["text"])) if IDENTIFIER.search(n) and not re.fullmatch(r"M\d+", n)
+        )
         errors.extend(f"R 第 {k + 1} 条中的 {name} 没有出现在它的原话片段中" for name in names if name not in joined)
         entries.append({"text": item["text"].strip(), "quotes": good})
     for mid, (kind, _) in parsed.items():
