@@ -38,7 +38,7 @@ def prop(pid: str, formula: str, source: str = "推理") -> dict:
     return {"id": pid, "source": source, "basis": "", "tree": tree, "formula": formula, "class": F.classify(tree)}
 
 
-MODULE = textwrap.dedent('''
+MODULE = textwrap.dedent("""
     def examples():
         return [("3\\n5 2 7\\n", "2\\n")]
 
@@ -67,7 +67,7 @@ MODULE = textwrap.dedent('''
         return []
 
     EXAMPLE_OF = {}
-''')
+""")
 
 PROPS = {"R1": prop("R1", "G(答案 = 最小值)"), "R2": prop("R2", "G(个数 ≥ 1)")}
 
@@ -118,7 +118,7 @@ def test_mutation_kills_only_count_discriminating_propositions(module):
 
 def test_derive_and_trace_must_not_give_the_same_key():
     item = {"skip": {"ok": []}, "derive": {"ok": {"值": {"答案": 1}}}, "trace": {"ok": [{"值": {"答案": 1}}]}}
-    states, unreadable, err = IO.build_trace(item)
+    states, _, err = IO.build_trace(item)
     assert states is None and "同一个键" in err
 
 
@@ -171,8 +171,14 @@ def test_runs_judge_the_formula_on_the_program(tmp_path, module, program, expect
         "checks": [],
         "align_failures": {},
         "excluded": {},
-        "io": {"settings": {"command": "python3 -I main.py"}, "examples": examples, "example_of": {},
-               "example_props": [], "derived": [], "kills": {"R1": 3, "R2": 0}},  # fmt: skip
+        "io": {
+            "settings": {"command": "python3 -I main.py"},
+            "examples": examples,
+            "example_of": {},
+            "example_props": [],
+            "derived": [],
+            "kills": {"R1": 3, "R2": 0},
+        },
     }
     recs = IO.run(run, w, PROPS, frozen, set(), {"budget": 600})
     summary = RUN.summarize(recs, PROPS, frozen)["propositions"]
