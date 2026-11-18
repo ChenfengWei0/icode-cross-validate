@@ -189,7 +189,7 @@ def test_history_guard(home, tmp_path, monkeypatch):
     assert verdict("cv-align", {"path": str(done / "report.md")}, tmp_path) == "block"  # W above the state dir
     assert verdict("cv-subtask", {"path": str(done / "report.md")}) == "allow"  # its own guard refuses everything
     lines = (state / "history-reads.jsonl").read_text().splitlines()
-    assert len(lines) == 9 and json.loads(lines[0])["profile"] == "Code"
+    assert len(lines) == 10 and json.loads(lines[0])["profile"] == "Code"
 
 
 def test_turn_and_session_triggers(home, tmp_path, monkeypatch, fake_icode):

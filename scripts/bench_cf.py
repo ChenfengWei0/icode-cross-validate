@@ -205,7 +205,59 @@ def _block(rs: list[dict], key: str) -> dict:
         "false_alarm": round(sum(r["conclusion"] == IO.FAIL for r in right) / len(right), 3) if right else None,
         "k_caught_wrong": round(sum(r["conclusion"] == IO.FAIL for r in wrong) / len(wrong), 3) if wrong else None,
         "no_conclusion": sum(r["conclusion"] == IO.NONE for r in rs),
+        "false_approval": round((len(cert) - cc) / len(rs), 3) if rs else None,
     }
+
+
+def _baselines(out: Path, rows: list[dict], key: str = "correct", n: int = 2000) -> dict:
+    """C9: the two baselines on the samples that have them, next to the io mode's first round on the same samples."""
+    import random
+
+    have = []
+    for d in rows:
+        f = out / d["pid"] / f"base-s{d['sample']}.json"
+        if f.exists():
+            have.append((d, json.loads(f.read_text())))
+    if not have:
+        return {}
+
+    def block(passed: list[tuple[bool, bool]]) -> dict:  # (passed, truly correct)
+        cert = [t for p, t in passed if p]
+        wrong = [p for p, t in passed if not t]
+        return {"certified": len(cert), "precision": round(sum(cert) / len(cert), 3) if cert else None,
+                "k_caught_wrong": round(sum(not p for p in wrong) / len(wrong), 3) if wrong else None,
+                "false_approval": round((len(cert) - sum(cert)) / len(passed), 3)}  # fmt: skip
+
+    def picks(items):
+        return {
+            "io": [(d["rounds"][0]["conclusion"] == IO.PASS, d["rounds"][0]["truth"][key]) for d, _ in items],
+            "examples": [(b["examples"], d["rounds"][0]["truth"][key]) for d, b in items],
+            "judge": [(b["judge"], d["rounds"][0]["truth"][key]) for d, b in items],
+        }
+
+    res = {"samples": len(have), **{k: block(v) for k, v in picks(have).items()}}
+    by: dict[str, list] = {}
+    for item in have:
+        by.setdefault(item[0]["pid"], []).append(item)
+    pids, rng, diffs = sorted(by), random.Random(1), {"examples": [], "judge": []}  # noqa: S311
+    for _ in range(n):
+        pk = picks([it for p in (rng.choice(pids) for _ in pids) for it in by[p]])
+
+        def prec(xs):
+            c = [t for p, t in xs if p]
+            return sum(c) / len(c) if c else None
+
+        io = prec(pk["io"])
+        for b in diffs:
+            other = prec(pk[b])
+            if io is not None and other is not None:
+                diffs[b].append(io - other)
+    for b, xs in diffs.items():
+        xs.sort()
+        res[f"io_minus_{b}_precision_ci"] = (
+            [round(xs[int(0.025 * len(xs))], 3), round(xs[int(0.975 * len(xs)) - 1], 3)] if xs else None
+        )
+    return res
 
 
 def _bootstrap(rows: list[dict], key: str, n: int = 2000) -> dict:
@@ -277,6 +329,7 @@ def summary(out: Path, problems: list[str] | None) -> dict:
         "first_round": _block([d["rounds"][0] for d in rows], "audited"),
         "ci": _bootstrap(rows, "audited"),
     }
+    res["baselines"] = _baselines(out, rows)
     res["escaped"] = [f"{d['pid']}#{d['sample']}" for d in rows
                       if d["rounds"][0]["conclusion"] == IO.PASS and not d["rounds"][0]["truth"]["correct"]]  # fmt: skip
     res["false_alarms"] = [f"{d['pid']}#{d['sample']}" for d in rows
