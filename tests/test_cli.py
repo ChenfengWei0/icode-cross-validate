@@ -174,6 +174,7 @@ def test_history_guard(home, tmp_path, monkeypatch):
     assert verdict("Code", {"path": str(done / "report.md")}) == "block"
     assert verdict("Code", {"command": f"cat '{done}/report.md'"}) == "block"
     assert verdict("Code", {"command": "ls", "working_dir": str(done)}) == "block"
+    assert verdict("Code", {"command": "ls", "workdir": str(done)}) == "block"
     assert verdict("Code", {"command": f"{state}/bin/cv status"}) == "allow"
     assert verdict("Code", {"command": f"{state}/bin/../projects"}) == "block"
     assert verdict("Code", {"path": "src/cross-validate/cv_flow.py"}) == "allow"

@@ -129,8 +129,9 @@
       "description": "交叉验证：拦下工作目录中提到状态目录的工具调用（细则 5.6）",
       "event": "before_tool_call",
       "match": {
+        "tool_kind": "shell",
         "args": {
-          "working_dir": {
+          "workdir": {
             "regex": "chrys/cross-validate|cross-validate/projects"
           }
         }

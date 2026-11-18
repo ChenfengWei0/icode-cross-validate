@@ -833,7 +833,7 @@ def _history_guard(payload: dict) -> int:
     if payload.get("profile") == "cv-subtask":  # 细则 5.3 has its own guard
         return 0
     args = (payload.get("tool") or {}).get("args") or {}
-    text = "\n".join(str(args.get(k) or "") for k in ("path", "command", "working_dir"))
+    text = "\n".join(str(args.get(k) or "") for k in ("path", "command", "workdir", "working_dir"))
     if all(_state_access_allowed(m, payload) for m in STATE_MENTION.findall(text)):
         return 0
     record = {

@@ -182,7 +182,7 @@ snapshots/<run>/          快照，运行结束后默认删除（细则 16.4）
 - `_tools`、`_rerun` 只用于子任务 agent；对齐阶段不设。
 
 细则 5.6　**agent 不去读其他运行的结果。** 状态目录里有历史运行的命题、检查脚本和报告，主 agent 和对齐 agent 读到它们，就不再是独立的一次检查，"报告对主 agent 不可见"也会落空。
-- 全局 hooks 中有三个阻断型 `before_tool_call` hook，用 `match.args` 分别匹配工具的 `path`、`command`、`working_dir` 参数，只有提到状态目录时才触发，平常的工具调用不启动任何进程。
+- 全局 hooks 中有三个阻断型 `before_tool_call` hook，用 `match.args` 分别匹配工具的 `path`、`command` 参数和 shell 工具的 `workdir` 参数（iCode 0.36 起 shell 的 `working_dir` 改名为 `workdir`，脚本两个名字都读），只有提到状态目录时才触发，平常的工具调用不启动任何进程。
 - 提到状态目录的调用一律拦下，只有两种例外：`cross-validate/bin/`（用户的 `cv` 命令）；对齐 agent 访问位于状态目录内的 W（积累模式的快照），以及尚未生成报告的运行中的 `align/` 和 `verify-headers/`（细则 11.11 的试验头文件）。
 - 被拦下的调用记入 `history-reads.jsonl`（时间、`cwd`、profile、工具名）。工作目录是本次 W 的记录，算作这次运行的注写进报告，不影响结论：调用已被拦下，没有读到东西。
 - 这只能挡住明说路径的访问，防的是 agent 自发去读，防不住有意绕过（例如 `cd ..`、拼接路径）。见第 18 节。子任务 agent 不受此节影响，它的任何工具调用都被拦下（细则 5.3）。
