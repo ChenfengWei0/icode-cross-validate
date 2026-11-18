@@ -18,6 +18,7 @@ from pathlib import Path
 
 import cv_align as A
 import cv_check as C
+import cv_io as IO
 import cv_ledger as L
 import cv_monitor as M
 import cv_report as RP
@@ -127,10 +128,11 @@ def intake(text: str, cwd: str, workflow_dir: Path) -> dict:
     if not text.strip():
         raise RuntimeError("目标为空：请输入要实现的目标，它同时是交叉验证的需求")
     run = S.create_run(cwd)
-    S.write_json(
-        run / "run.json",
-        {"mode": MODE_GOAL, "trigger": "目标模式", "project": cwd, "snapshot": None, "started": _now()},
-    )
+    info = {"mode": MODE_GOAL, "trigger": "目标模式", "project": cwd, "snapshot": None, "started": _now()}
+    io = (S.read_json(S.project_dir(cwd) / "project.json", {}) or {}).get("settings", {}).get("io") or {}
+    if io.get("command"):  # 细则 11.12: frozen with run.json
+        info["io"] = {k: v for k, v in io.items() if k in ("command", "protocol", "box_args")}
+    S.write_json(run / "run.json", info)
     S.write_text(run / "goal.txt", text)
     return {
         "run": str(run),
@@ -785,6 +787,128 @@ def align_check(state: dict, answer: str | None, attempt: int, config: dict) -> 
 
 
 # ---------------------------------------------------------------------------------------------------
+# 算法1 第6行 for programs that only read input and write output (细则 11.12)
+# ---------------------------------------------------------------------------------------------------
+
+
+def io_settings(state: dict) -> dict | None:
+    return (S.read_json(Path(state["run"]) / "run.json", {}) or {}).get("io")
+
+
+def _io_props(run: Path) -> tuple[dict[str, dict], dict[str, str]]:
+    """Propositions for io alignment, and those dropped before it because no one reads the code."""
+    props, dropped = {}, {}
+    for p in _accepted(run):
+        if IO.struct_kind(p) in IO.UNCHECKABLE:
+            dropped[p["id"]] = "io 对齐判不了调用、只由这类结构命题（细则 11.12）"
+        else:
+            props[p["id"]] = p
+    return props, dropped
+
+
+def io_align_prompt(state: dict) -> str | None:  # 算法1 第6行（细则 11.12）
+    run = Path(state["run"])
+    data = S.read_json(run / "propositions.json")
+    props, _ = _io_props(run)
+    if not props:
+        return None
+    ex = IO.from_examples(props, S.read_json(run / "sentences.json") or [])
+    listing = "\n".join(
+        f"{p['id']}  〔{p['class']}〕{'〔来自示例〕' if pid in ex else ''}  {p['sentence']}\n      公式  {p['formula']}"
+        for pid, p in props.items()
+    )
+    S.ensure_private(run / "align")
+    S.write_json(run / "w-before.json", S.tree_digests(Path(state["w"])))
+    state["digests"] = S.record_digests(run, "align_start", state.get("digests"))
+    io = io_settings(state) or {}
+    return prompt(
+        "io_align",
+        DECLS=_decl_text(Decls.from_json(data["decls"])),
+        PROPOSITIONS=listing,
+        REQUIREMENT=(run / "requirement.txt").read_text(encoding="utf-8"),
+        PROTOCOL=io.get("protocol") or "输入文本就是程序的标准输入，输出文本就是程序的标准输出。",
+        EXAMPLE_PROPS="、".join(sorted(ex, key=_num_id)) or "（没有）",
+    )
+
+
+def _python_block(answer: str) -> str | None:
+    blocks = re.findall(r"```(?:python|py)?[ \t]*\n(.*?)```", answer, re.DOTALL)
+    return blocks[-1] if blocks else None
+
+
+def io_align_check(state: dict, answer: str | None, attempt: int, config: dict) -> tuple[dict, str | None]:
+    """细则 11.12: trial on the requirement's examples, one correction, then freeze and the mutation test."""
+    run = Path(state["run"])
+    align = S.ensure_private(run / "align")
+    props, dropped = _io_props(run)
+    entities = Decls.from_json(S.read_json(run / "propositions.json")["decls"]).of("实体")
+    cfg = IO.settings(config, io_settings(state))
+    ex_props = IO.from_examples(props, S.read_json(run / "sentences.json") or [])
+    code = _python_block(answer) if answer is not None else None
+    if answer is not None:
+        S.write_text(run / f"io-align-answer-{attempt}.txt", answer)
+    report: dict = {"problems": ["对齐 agent 没有回答" if answer is None else "回答中没有 python 代码块"],
+                    "contradicted": {}, "unmapped": {}, "examples": [], "example_of": {}, "derived": []}  # fmt: skip
+    if code is not None:
+        S.write_text(align / IO.MODULE, code)
+        module = IO.Module(align / IO.MODULE, cfg)
+        try:
+            requirement = (run / "requirement.txt").read_text(encoding="utf-8")
+            report = IO.trial(module, props, entities, requirement, ex_props, cfg)
+        finally:
+            module.close()
+    S.write_json(run / f"io-trial-{attempt}.json", report)
+    trouble = report["problems"] + [
+        f"{pid} {why}" for pid, why in {**report["contradicted"], **report["unmapped"]}.items()
+    ]
+    if trouble and attempt == 1 and code is not None:
+        return state, prompt(
+            "io_align_fix", ORIGINAL=io_align_prompt(state) or "", PREVIOUS=code, PROBLEMS=_bullets(trouble[:30])
+        )
+    excluded = dict(dropped)
+    excluded.update({pid: f"与示例矛盾：{why}" for pid, why in report["contradicted"].items()})
+    excluded.update({pid: f"示例对照缺失：{why}" for pid, why in report["unmapped"].items()})
+    failures = {}
+    if report["problems"]:
+        why = "io 对齐的试跑没有通过：" + "；".join(report["problems"][:3])
+        failures = {pid: why for pid in props if pid not in excluded}
+    kills: dict[str, int] = {}
+    inputs: list[str] = []
+    if not failures:
+        module = IO.Module(align / IO.MODULE, cfg)
+        try:
+            inputs = IO.freeze_inputs(module, report["examples"], int(cfg["inputs"]))
+            live = {pid: p for pid, p in props.items() if pid not in excluded}
+            kills = IO.mutation_kills(module, live, entities, report["examples"], report["example_of"], ex_props, cfg)
+        finally:
+            module.close()
+    S.write_json(align / IO.INPUTS, inputs)
+    usable = not failures and any(
+        kills.get(pid) and p["class"] != "结构" for pid, p in props.items() if pid not in excluded
+    )
+    frozen = {
+        "kind": "io",
+        "bindings": {},
+        "checks": [],
+        "align_failures": failures,
+        "excluded": excluded,
+        "io": {
+            "settings": io_settings(state),
+            "examples": report["examples"],
+            "example_of": report["example_of"],
+            "example_props": sorted(ex_props),
+            "derived": report["derived"],
+            "kills": kills,
+            "usable": usable,
+            "inputs": len(inputs),
+        },
+    }
+    S.write_json(align / "checks.frozen.json", frozen)
+    state["digests"] = S.record_digests(run, "checks", state.get("digests"))
+    return state, None
+
+
+# ---------------------------------------------------------------------------------------------------
 # 算法1 第7行: the checker
 # ---------------------------------------------------------------------------------------------------
 
@@ -826,7 +950,12 @@ def run_checks(state: dict, config: dict) -> dict:  # 算法1 第7行
     props = {p["id"]: p for p in _accepted(run)}
     entities = Decls.from_json(data["decls"]).of("实体")
     frozen = S.read_json(run / "align" / "checks.frozen.json")
-    results = RUN.run_checks(run, Path(state["w"]), props, frozen, entities, config)
+    if frozen.get("kind") == "io":  # 细则 11.12
+        live = {pid: p for pid, p in props.items() if pid not in frozen.get("excluded", {})}
+        checks = IO.run(run, Path(state["w"]), live, frozen, entities, config)
+        results = RUN.summarize(checks, live, frozen)
+    else:
+        results = RUN.run_checks(run, Path(state["w"]), props, frozen, entities, config)
     S.write_json(run / "results.json", results)
     state["digests"] = S.record_digests(run, "results", state.get("digests"))
     _integrity(state)

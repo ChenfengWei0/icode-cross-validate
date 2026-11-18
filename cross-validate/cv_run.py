@@ -302,6 +302,12 @@ def run_checks(run: Path, w: Path, props: dict[str, dict], frozen: dict, entitie
         timeouts = sum(1 for d in rec["runs_detail"] if d.get("timeout"))
         if timeouts:
             rec["timeouts"] = timeouts
+    shutil.rmtree(pycache, ignore_errors=True)
+    return summarize(results, props, frozen)
+
+
+def summarize(results: list[dict], props: dict[str, dict], frozen: dict) -> dict:
+    """Each proposition's worst result over its checks (细则 13.3), with notes; results.json (细则 13.6)."""
     by_prop: dict[str, dict] = {}
     for pid in props:
         # 细则 13.8: checks the alignment agent marked unstated_inputs are listed for a person and still counted:
@@ -331,6 +337,10 @@ def run_checks(run: Path, w: Path, props: dict[str, dict], frozen: dict, entitie
         vacuous = bool(fired) and not any(fired)  # 细则 13.7
         if vacuous:
             notes.append(VACUOUS)
+        untested = [r["untested"] for r in mine if r.get("untested")]
+        if untested and not vacuous:  # 细则 11.12: no better evidence than a vacuous pass
+            vacuous = True
+            notes.append(untested[0])
         by_prop[pid] = {
             "result": worst,
             "reason": reasons[0] if reasons else None,
@@ -344,5 +354,4 @@ def run_checks(run: Path, w: Path, props: dict[str, dict], frozen: dict, entitie
             by_prop[pid]["unstated_inputs"] = [
                 {k: r.get(k) for k in ("index", "form", "result", "reason", "counterexample")} for r in aside
             ]
-    shutil.rmtree(pycache, ignore_errors=True)
     return {"checks": results, "propositions": by_prop}

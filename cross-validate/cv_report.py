@@ -157,6 +157,10 @@ def _detail(r: dict) -> str:
             parts.append(
                 f"反例（{_plain(cex['engine'], 20)}）：状态 {cex.get('state')}，最后的状态 {_plain(shown, 400)}"
             )
+        elif "input" in cex:  # 细则 11.12: a run of the program on a frozen input
+            said = f"输入「{_plain(cex['input'], 200)}」，输出「{_plain(cex.get('output') or '', 200)}」"
+            why = f"，{_plain(cex['why'], 200)}" if cex.get("why") else ""
+            parts.append(f"反例：第 {cex.get('run')} 次运行，{said}{why}")
         elif "actions" in cex:
             acts = [a for a in cex["actions"] if a is not None]
             shown = acts if len(acts) <= 12 else ["…", *acts[-12:]]
@@ -220,8 +224,15 @@ def build(run: Path, extra: dict, config: dict) -> dict:
     props = S.read_json(run / "propositions.json", {}) or {}
     frozen = S.read_json(run / "align" / "checks.frozen.json", {}) or {}
     results = S.read_json(run / "results.json", {}) or {}
-    accepted = [p for p in props.get("propositions", []) if not p.get("problems")]
+    # 细则 11.12: propositions io alignment set aside before freezing count as discarded.
+    excluded = frozen.get("excluded", {})
+    accepted = [p for p in props.get("propositions", []) if not p.get("problems") and p["id"] not in excluded]
     discarded = [p for p in props.get("propositions", []) if p.get("problems")]
+    discarded += [
+        {**p, "problems": [excluded[p["id"]]]}
+        for p in props.get("propositions", [])
+        if not p.get("problems") and p["id"] in excluded
+    ]
     forms: dict[str, list[str]] = {}
     for c in frozen.get("checks", []):
         form = _plain(c["form"], 40)

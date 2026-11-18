@@ -46,9 +46,10 @@ FALSE = {"op": "⊥"}
 
 
 class Trace:
-    def __init__(self, states: list[dict], entities: set[str]):
+    def __init__(self, states: list[dict], entities: set[str], tolerance: float | None = None):
         self.states = states
         self.entities = entities
+        self.tolerance = tolerance  # 细则 11.12: io alignment compares non-integers relatively
         # 细则 12.4: entities listed in some state; the others are singletons named by the entity.
         self.listed: set[str] = set()
         for k, state in enumerate(states):
@@ -175,21 +176,23 @@ def term_value(n: dict, tr: Trace, k: int):
     raise AlignError(f"无法在轨迹上求值：{op}")
 
 
-def _same(a, b) -> bool:
+def _same(a, b, tolerance: float | None = None) -> bool:
     if isinstance(a, bool) != isinstance(b, bool):
         return False
     if isinstance(a, int) and isinstance(b, int):
         return a == b  # 细则 12.3: integers exactly
     if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+        if tolerance is not None:  # 细则 11.12
+            return abs(a - b) <= tolerance * max(1.0, abs(a), abs(b))
         return abs(a - b) <= 1e-9
     return json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
 
 
-def compare(op: str, a, b) -> bool:
+def compare(op: str, a, b, tolerance: float | None = None) -> bool:
     if op == "eq":
-        return _same(a, b)
+        return _same(a, b, tolerance)
     if op == "ne":
-        return not _same(a, b)
+        return not _same(a, b, tolerance)
     if not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in (a, b)):
         raise AlignError(f"大小比较的操作数不是数：{a!r}、{b!r}")
     return {"lt": a < b, "gt": a > b, "le": a <= b, "ge": a >= b}[op]
@@ -213,7 +216,7 @@ def atom_value(n: dict, tr: Trace, k: int) -> bool:
             return v
         if op in F.COMPARISONS:
             a, b = (term_value(x, tr, k) for x in n["args"])
-            return compare(op, a, b)
+            return compare(op, a, b, tr.tolerance)
     except _Absent:
         return False
     if op == "lit" and isinstance(n["value"], bool):
@@ -439,7 +442,12 @@ def finish(n: dict) -> bool:
 
 
 def judge(
-    tree: dict, states: list[dict], entities: set[str], max_states: int | None = None, deadline: float | None = None
+    tree: dict,
+    states: list[dict],
+    entities: set[str],
+    max_states: int | None = None,
+    deadline: float | None = None,
+    tolerance: float | None = None,
 ) -> dict:
     """Judge one proposition on one trace. Raises AlignError when the trace cannot be used."""
     if not states:
@@ -447,7 +455,7 @@ def judge(
     truncated = False
     if max_states is not None and len(states) > max_states:
         states, truncated = states[:max_states], True
-    tr = Trace(states, entities)
+    tr = Trace(states, entities, tolerance)
     cls = F.classify(tree)
     if cls == "结构":
         raise AlignError("结构命题不能用 trace 检查（细则 11.4）")

@@ -621,6 +621,8 @@ def run_once(project: Path, trigger: str, config: dict) -> Path | None:
         "code": {"snapshot_time": _now()},
         "notes": [],
     }
+    if config.get("io", {}).get("command"):  # 细则 11.12: the project's io settings, frozen with run.json
+        info["io"] = {k: v for k, v in config["io"].items() if k in ("command", "protocol", "box_args")}
     # 细则 16.2: run.json first, so a run that stops still counts the messages it saw.
     S.write_json(run / "run.json", info)
     try:
