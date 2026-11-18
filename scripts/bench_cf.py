@@ -99,27 +99,31 @@ def _box(d: Path, args: list[str], stdin=None, timeout: float = 60):
         return None, b""
 
 
+def verdict(problem_dir: Path, program: str, inp: str, ans: str, limit: float = 20) -> str:
+    """OK, WA, RE, TLE or CHECKER_ERR for one input, judged by the dataset's checker."""
+    with tempfile.TemporaryDirectory(prefix="cfg-") as tmp:
+        d = Path(tmp)
+        (d / "sol.py").write_text(program)
+        shutil.copy(problem_dir / "checker.py", d / "checker.py")
+        (d / "in.txt").write_text(inp)
+        (d / "ans.txt").write_text(ans)
+        with open(d / "in.txt") as f:
+            rc, out = _box(d, ["/usr/bin/python3", "-I", "sol.py"], stdin=f, timeout=limit)
+        if rc is None or rc != 0:
+            return "TLE" if rc is None else "RE"
+        (d / "sub.txt").write_bytes(out)
+        _, res = _box(d, ["/usr/bin/python3", "-I", "checker.py", "in.txt", "ans.txt", "sub.txt"], timeout=300)
+        try:
+            return "OK" if float(res.decode().split()[-1]) in (1, 100) else "WA"
+        except (ValueError, IndexError):
+            return "CHECKER_ERR"
+
+
 def grade(problem_dir: Path, program: str, limit: float = 20) -> dict:
     verdicts: dict[str, int] = {}
     first_fail = None
     for case in sorted((problem_dir / "tests").glob("*.in")):
-        with tempfile.TemporaryDirectory(prefix="cfg-") as tmp:
-            d = Path(tmp)
-            (d / "sol.py").write_text(program)
-            shutil.copy(problem_dir / "checker.py", d / "checker.py")
-            shutil.copy(case, d / "in.txt")
-            shutil.copy(case.with_suffix(".out"), d / "ans.txt")
-            with open(case) as f:
-                rc, out = _box(d, ["/usr/bin/python3", "-I", "sol.py"], stdin=f, timeout=limit)
-            if rc is None or rc != 0:
-                v = "TLE" if rc is None else "RE"
-            else:
-                (d / "sub.txt").write_bytes(out)
-                _, res = _box(d, ["/usr/bin/python3", "-I", "checker.py", "in.txt", "ans.txt", "sub.txt"], timeout=300)
-                try:
-                    v = "OK" if float(res.decode().split()[-1]) in (1, 100) else "WA"
-                except (ValueError, IndexError):
-                    v = "CHECKER_ERR"
+        v = verdict(problem_dir, program, case.read_text(), case.with_suffix(".out").read_text(), limit)
         verdicts[v] = verdicts.get(v, 0) + 1
         if v != "OK" and first_fail is None:
             first_fail = case.name
@@ -342,6 +346,48 @@ def _audit_input(ref, req: str, inp: str, err: str) -> tuple[str, str]:
     ), answer
 
 
+JUDGE_PROGRAM = """Below are a competitive programming problem and a Python 3 program written for it. Decide whether
+the program is correct: it must print an accepted answer on every valid input, within the limits. The first line
+of your answer must be exactly YES (the program is correct) or NO; then explain.
+
+# Problem
+
+{req}
+
+# Program
+
+```python
+{code}
+```
+"""
+
+
+def baseline(a) -> None:
+    """C9: the examples-only check and the same model judging the program, for every sample with code."""
+    ask = asker(a.model, 32000)
+
+    def one(f: Path) -> None:
+        out = f.parent / f"base-{f.name}"
+        d = json.loads(f.read_text())
+        program = d["rounds"][0]["program"]
+        if out.exists() or not program.strip():
+            return
+        pdir = Path(a.data) / "problems" / d["pid"]
+        req, examples = requirement(json.loads((pdir / "problem.json").read_text()))
+        ex = [verdict(pdir, program, i, o) for i, o in examples]
+        answer = ask(JUDGE_PROGRAM.format(req=req, code=program))
+        first = next((ln.strip() for ln in answer.splitlines() if ln.strip()), "")
+        rec = {"examples": bool(ex) and all(v == "OK" for v in ex), "example_verdicts": ex,
+               "judge": first.upper().startswith("YES"), "judge_answer": answer[-2000:]}  # fmt: skip
+        out.write_text(json.dumps(rec, ensure_ascii=False, indent=1))
+        print(d["pid"], d["sample"], rec["examples"], rec["judge"], flush=True)
+
+    files = sorted(Path(a.out).glob("*/s[0-9]*.json"))
+    with ThreadPoolExecutor(a.workers) as ex:
+        list(ex.map(one, files))
+    print(json.dumps(USAGE), flush=True)
+
+
 def audit(a) -> None:
     """C4: an outside referee re-judges every sample where the io mode and the hidden tests disagree."""
     ref = asker(a.referee, 32000)
@@ -406,12 +452,20 @@ def main() -> None:
     au.add_argument("--data", required=True)
     au.add_argument("--out", required=True)
     au.add_argument("--referee", default="claude-opus-5-5")
+    bl = sub.add_parser("baseline")
+    bl.add_argument("--data", required=True)
+    bl.add_argument("--out", required=True)
+    bl.add_argument("--model", default=MODEL)
+    bl.add_argument("--workers", type=int, default=4)
     sm = sub.add_parser("summary")
     sm.add_argument("--out", required=True)
     sm.add_argument("--problems")
     a = ap.parse_args()
     if a.cmd == "audit":
         audit(a)
+        return
+    if a.cmd == "baseline":
+        baseline(a)
         return
     if a.cmd == "summary":
         probs = [x.strip() for x in Path(a.problems).read_text().splitlines() if x.strip()] if a.problems else None
