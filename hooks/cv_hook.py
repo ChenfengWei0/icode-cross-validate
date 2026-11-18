@@ -1,4 +1,4 @@
-"""Entry point of the cv- hooks (README 细则 15.2, 16.1, 5.3): `cv_hook.py record|turn|session_end|guard`."""
+"""Entry point of the cv- hooks (README 细则 15.2, 16.1, 5.3): `cv_hook.py record|turn|compact|session_end|guard|history`."""
 
 import sys
 from pathlib import Path

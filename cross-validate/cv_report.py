@@ -288,6 +288,12 @@ def build(run: Path, extra: dict, config: dict) -> dict:
         "to_confirm": to_confirm(prop_results, accepted),
         "review": review_lines(prop_results, accepted),
     }
+    pre = (frozen.get("io") or {}).get("precheck") or {}
+    if pre.get("dropped"):  # 细则 11.12 输入预检, 细则 14.1 第 3 项
+        data["notes"].append(
+            f"io 输入预检去掉了 {pre['dropped']} 个生成的输入（共 {pre.get('generated', '?')} 个），"
+            f"第一个原因：{_plain(pre.get('first') or '', 200)}（细则 11.12）"
+        )
     ratios = (config["max_discard_ratio"], config.get("max_confirm_ratio", 0.5))
     data["conclusion"], data["conclusion_reason"] = conclusion(data, *ratios)
     data["conclusion_without_review"] = conclusion(data, *ratios, ignore_review=True)[0]  # 细则 17.12
@@ -310,6 +316,17 @@ def render(data: dict) -> str:
         for d, ms in others.items():
             if ms:
                 out.append(f"- {d}：{'、'.join(sorted(ms, key=lambda m: int(m[1:])))}")
+        implicit = sorted(
+            ((m, v.split()[-1]) for m, v in req.get("messages", {}).items() if v.startswith("隐含更正")),
+            key=lambda x: int(x[0][1:]),
+        )
+        if implicit:  # 细则 15.4: the subtask's own judgment, so each one is shown for the user to confirm
+            out.append("- 隐含更正（没有明说是修改，按后一条为准，请确认）：")
+            texts = req.get("message_texts", {})
+            for m, k in implicit:
+                out.append(
+                    f"  - {m} 取代 {k}：「{_plain(texts.get(m, ''), 120)}」取代「{_plain(texts.get(k, ''), 120)}」"
+                )
     if data["suspect_names"]:
         out.append(f"- 疑似来自实现（R 中出现、W 的代码中也出现）：{'、'.join(data['suspect_names'])}")
     out.append("")

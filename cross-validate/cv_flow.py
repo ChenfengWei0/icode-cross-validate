@@ -325,6 +325,9 @@ def consolidate_check(state: dict, answer: str | None, attempt: int) -> tuple[di
         return state, None
     req, txt = L.build_requirement(data["entries"], data["messages"], MODE_ACCUM)
     req["preprocessed"] = [m["id"] for m in messages if m.get("replaced")]
+    implicit = {mid for mid, v in data["messages"].items() if v.startswith("隐含更正")}
+    implicit |= {data["messages"][mid].split()[-1] for mid in implicit}
+    req["message_texts"] = {m["id"]: m["text"] for m in messages if m["id"] in implicit}  # 细则 15.4, for the report
     S.write_json(run / "requirement.json", req)
     S.write_text(run / "requirement.txt", txt)
     state["digests"] = S.record_digests(run, "requirement", state.get("digests"))
@@ -908,10 +911,14 @@ def io_align_check(state: dict, answer: str | None, attempt: int, config: dict) 
         failures = {pid: why for pid in props if pid not in excluded}
     kills: dict[str, int] = {}
     inputs: list[str] = []
+    pre_dropped, pre_why, generated = 0, None, 0
     if not failures:
         module = IO.Module(align / IO.MODULE, cfg)
         try:
             inputs = IO.freeze_inputs(module, report["examples"], int(cfg["inputs"]))
+            pre = IO.precheck_inputs(module, inputs, report["examples"], cfg)
+            inputs, generated, pre_dropped, pre_why = pre["inputs"], pre["generated"], pre["dropped"], pre["first"]
+            S.write_json(align / IO.DERIVED, pre["derived"])
             live = {pid: p for pid, p in props.items() if pid not in excluded}
             kills = IO.mutation_kills(
                 module,
@@ -926,8 +933,10 @@ def io_align_check(state: dict, answer: str | None, attempt: int, config: dict) 
         finally:
             module.close()
     S.write_json(align / IO.INPUTS, inputs)
-    usable = not failures and any(
-        kills.get(pid) and p["class"] != "结构" for pid, p in props.items() if pid not in excluded
+    usable = (
+        not failures
+        and generated - pre_dropped >= float(cfg["min_kept"]) * generated  # 细则 11.12 输入预检
+        and any(kills.get(pid) and p["class"] != "结构" for pid, p in props.items() if pid not in excluded)
     )
     frozen = {
         "kind": "io",
@@ -945,6 +954,7 @@ def io_align_check(state: dict, answer: str | None, attempt: int, config: dict) 
             "kills": kills,
             "usable": usable,
             "inputs": len(inputs),
+            "precheck": {"generated": generated, "dropped": pre_dropped, "first": pre_why},
         },
     }
     S.write_json(align / "checks.frozen.json", frozen)

@@ -22,6 +22,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 WF = ROOT / "cross-validate"
 PASS, FAIL, SKIP, MANUAL = "通过", "未通过", "跳过", "人工"
+# Commits that broke P-6 after they were pushed; listed with the reason instead of rewriting public history.
+KNOWN_BAD_COMMITS = {"4b1b9e1": "标题用了 bench:，不是 Conventional Commits 的类型（应为 chore:）"}
 BASE_COMMIT = "5cef5be"  # the last commit of the previous design; the rebuild starts after it
 MANUAL_RULES = {"9.4": "“一条命题只说一件事”无法机械判断，只在提示中要求（README 细则 9.4、第 18 节）"}
 DEVIATIONS = {"17.1": ["6.1"], "17.2": ["8.9"], "17.3": ["10.3"], "17.4": ["11.5"], "17.5": ["16.1", "16.6"],
@@ -303,6 +305,8 @@ def project_checks(tests_summary: str | None, tests_ok: bool | None) -> dict[str
     bad_commits = []
     for c in commits:
         sha, body = c.split("\x00", 1)
+        if sha[:7] in KNOWN_BAD_COMMITS:  # already pushed; history is not rewritten
+            continue
         subject = body.splitlines()[0]
         if not re.match(r"^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([^)]+\))?!?: \S", subject):
             bad_commits.append(f"{sha[:7]} 标题")

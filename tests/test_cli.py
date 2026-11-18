@@ -115,6 +115,7 @@ def test_record_hook_filters(home, tmp_path, monkeypatch):
     hook("record", {**base, "profile": "cv-align"}, tmp_path, monkeypatch)
     hook("record", base, tmp_path, monkeypatch, {"CV_INTERNAL": "1"})
     monkeypatch.delenv("CV_INTERNAL")
+    hook("record", {**base, "side_question": True}, tmp_path, monkeypatch)  # 细则 15.2: answered aside
     result = hook("record", {**base, "injected": True}, tmp_path, monkeypatch)
     assert result == ""
     msgs = L.read_messages(L.ledger_file(p))
@@ -213,7 +214,9 @@ def test_turn_and_session_triggers(home, tmp_path, monkeypatch, fake_icode):
     run = Path(c["run_dir"])
     info = S.read_json(run / "run.json")
     assert (
-        info["trigger"] == "一轮结束" and info["last_message"] == "M3" and info["code"]["version"].startswith("提交 ")
+        info["trigger"] == "一轮结束（新消息）"
+        and info["last_message"] == "M3"
+        and info["code"]["version"].startswith("提交 ")
     )
     assert (S.project_dir(p) / "reports" / "latest.md").exists() and (
         S.project_dir(p) / "reports" / f"{run.name}.md"
@@ -226,6 +229,58 @@ def test_turn_and_session_triggers(home, tmp_path, monkeypatch, fake_icode):
     hook("session_end", {"event": "session_end", "cwd": str(p), "profile": "Code"}, tmp_path, monkeypatch)
     runs = [c for c in calls(fake_icode) if c["args"][:2] == ["workflow", "run"]]
     assert len(runs) == 2 and S.read_json(Path(runs[1]["run_dir"]) / "run.json")["trigger"] == "会话结束"
+
+
+def test_code_change_and_compaction_trigger_after_the_first_run(home, tmp_path, monkeypatch, fake_icode):
+    """细则 16.1: after a ledger's first run, one new message triggers when the code changed or the main agent's
+    context was folded (phase3/4, not a sub-agent's); caches do not count as a change."""
+    installed(home, fake_icode)
+    p = git_project(tmp_path)
+    CLI.main(["init", str(p)])
+    turn = {"event": "after_turn", "status": "ok", "cwd": str(p), "profile": "Code"}
+
+    def runs():
+        return [c for c in calls(fake_icode) if c["args"][:2] == ["workflow", "run"]]
+
+    L.append_message(p, "s", "实现贪吃蛇。", False)
+    (p / "snake.py").write_text("x = 1\n")
+    hook("turn", turn, tmp_path, monkeypatch)
+    assert not runs(), "the first check of a ledger waits for N messages"
+    CLI.launch(p, "手动")
+    assert len(runs()) == 1
+    L.append_message(p, "s", "蛇撞墙也要结束", False)
+    (p / "__pycache__").mkdir()
+    (p / "__pycache__" / "snake.cpython-312.pyc").write_bytes(b"x")
+    hook("turn", turn, tmp_path, monkeypatch)
+    assert len(runs()) == 1, "a cache is not a code change"
+    (p / "snake.py").write_text("x = 2\n")
+    hook("turn", turn, tmp_path, monkeypatch)
+    assert len(runs()) == 2
+    assert S.read_json(Path(runs()[1]["run_dir"]) / "run.json")["trigger"] == "一轮结束（代码有改动）"
+    L.append_message(p, "s", "速度加快", False)
+    compact = {"event": "pre_compact", "cwd": str(p), "profile": "Code"}
+    hook("compact", {**compact, "trigger": "phase1"}, tmp_path, monkeypatch)
+    hook("compact", {**compact, "trigger": "phase4", "sub_agent": {"name": "x"}}, tmp_path, monkeypatch)
+    hook("turn", turn, tmp_path, monkeypatch)
+    assert len(runs()) == 2
+    hook("compact", {**compact, "trigger": "phase3"}, tmp_path, monkeypatch)
+    hook("turn", turn, tmp_path, monkeypatch)
+    assert len(runs()) == 3
+    assert S.read_json(Path(runs()[2]["run_dir"]) / "run.json")["trigger"] == "一轮结束（上下文压缩过）"
+
+
+def test_a_ledger_over_the_limit_stops_without_a_model_call(home, tmp_path, monkeypatch, fake_icode):
+    """细则 15.4 长度上限: never truncated; the run stops with the length and the advice to start anew."""
+    installed(home, fake_icode)
+    p = git_project(tmp_path)
+    CLI.main(["init", str(p)])
+    S.write_json(S.project_dir(p) / "project.json", {**S.read_json(S.project_dir(p) / "project.json"),
+                                                      "settings": {"ledger": {"max_chars": 10}}})  # fmt: skip
+    L.append_message(p, "s", "实现贪吃蛇，蛇撞墙时游戏结束。", False)
+    run = CLI.launch(p, "手动")
+    assert not [c for c in calls(fake_icode) if c["args"][:2] == ["workflow", "run"]]
+    rep = S.read_json(Path(run) / "report.json")
+    assert rep["conclusion"] == "无结论" and "需求记录过长" in rep["conclusion_reason"]
 
 
 def test_lock_and_pending(home, tmp_path, monkeypatch, fake_icode):

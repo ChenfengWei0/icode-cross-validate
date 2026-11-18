@@ -21,7 +21,7 @@
     },
     {
       "id": "cv-turn",
-      "description": "交叉验证：一轮结束时按新消息数触发（细则 16.1）",
+      "description": "交叉验证：一轮结束时按新消息、代码改动或上下文压缩触发（细则 16.1）",
       "event": "after_turn",
       "run": {
         "type": "command",
@@ -46,6 +46,23 @@
           "{{PYTHON}}",
           "{{HOOK}}",
           "session_end"
+        ]
+      },
+      "execution": {
+        "mode": "fire_and_forget",
+        "detach": true
+      }
+    },
+    {
+      "id": "cv-compact",
+      "description": "交叉验证：记下主 agent 的上下文压缩（细则 16.1）",
+      "event": "pre_compact",
+      "run": {
+        "type": "command",
+        "argv": [
+          "{{PYTHON}}",
+          "{{HOOK}}",
+          "compact"
         ]
       },
       "execution": {

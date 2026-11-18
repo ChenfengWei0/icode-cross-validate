@@ -53,6 +53,10 @@ def main() -> None:
                 item["trace"] = safe(mod.trace, it["input"], it["output"])
             items.append(item)
         out = {"items": items}
+    elif op == "skip":  # 细则 11.12 trial item 8: only skip; derive is checked input by input in the pre-check
+        out = {"items": [{"skip": safe(lambda t=t: list(mod.skip(t)))} for t in req["items"]]}
+    elif op == "trace":  # 细则 11.12: skip and derive were frozen with the inputs; only the output is read
+        out = {"items": [{"trace": safe(mod.trace, it["input"], it["output"])} for it in req["items"]]}
     elif op == "call":
         if not (hasattr(mod, "call_input") and hasattr(mod, "call_output")):
             out = {"load_error": "缺少 call_input 或 call_output"}

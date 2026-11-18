@@ -6,12 +6,14 @@ import argparse
 import contextlib
 import datetime as dt
 import fcntl
+import hashlib
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -83,6 +85,7 @@ HOOK_IDS = (
     "cv-record",
     "cv-turn",
     "cv-session-end",
+    "cv-compact",
     "cv-subtask-guard",
     "cv-history-guard-path",
     "cv-history-guard-command",
@@ -392,6 +395,31 @@ def _msg_num(mid: str | None) -> int:
     return int(mid[1:]) if mid and mid[1:].isdigit() else 0
 
 
+def turn_trigger(project: Path, config: dict) -> str | None:
+    """细则 16.1 一轮结束: the trigger's name for the report, or None when this turn does not start a run."""
+    auto = config["auto"]
+    fresh = new_messages(project)
+    if not fresh:
+        return None
+    if len(fresh) >= auto["min_new_messages"]:
+        return "一轮结束（新消息）"
+    last = last_run(project)
+    if last is None or last.get("ledger") != L.current_id(project):
+        return None  # the first check of a ledger waits for N messages (细则 16.1)
+    marker = S.project_dir(project) / "compacted"
+    try:
+        compacted = float(marker.read_text(encoding="utf-8")) if auto.get("on_compact", True) else 0.0
+    except (OSError, ValueError):
+        compacted = 0.0
+    if compacted > float(last.get("started_at", 0)):
+        return "一轮结束（上下文压缩过）"
+    if auto.get("on_code_change", True):
+        before = (last.get("code") or {}).get("fingerprint")
+        if before is None or code_fingerprint(project, config) != before:
+            return "一轮结束（代码有改动）"
+    return None
+
+
 def new_messages(project: Path) -> list[dict]:
     """细则 16.3: messages of the current ledger after the last message the latest run saw."""
     qid = L.current_id(project)
@@ -427,6 +455,10 @@ def cmd_status(args) -> int:
 
 class SnapshotError(Exception):
     pass
+
+
+class RunStop(Exception):
+    """A run that stops before the workflow, with the reason for the report (细则 16.2)."""
 
 
 def _git_files(project: Path) -> list[str]:
@@ -477,6 +509,32 @@ def snapshot(project: Path, target: Path, config: dict) -> list[str]:
         return _snapshot(project, target, config)
     except OSError as e:  # 细则 16.2: e.g. a file the user cannot read
         raise SnapshotError(f"无法做快照：{e}") from e
+
+
+CACHE_DIRS = ("__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache")
+
+
+def code_fingerprint(project: Path, config: dict) -> str:
+    """细则 16.1 代码有改动: path and content digest of every file the snapshot would copy, minus caches."""
+    cfg = config["snapshot"]
+    try:
+        files = _git_files(project) if _is_git(project) else _all_files(project)
+    except OSError:
+        return ""
+    h = hashlib.sha256()
+    for rel in sorted(f for f in files if not _excluded(f, cfg["exclude"] + cfg["link"])):
+        parts = Path(rel).parts
+        if any(d in CACHE_DIRS for d in parts) or rel.endswith(".pyc"):
+            continue
+        src = project / rel
+        if src.is_symlink() or not src.is_file():
+            continue
+        try:
+            digest = S.sha256_file(src)
+        except OSError:
+            continue
+        h.update(f"{rel}\0{digest}\n".encode())
+    return h.hexdigest()[:16]
 
 
 def _snapshot(project: Path, target: Path, config: dict) -> list[str]:
@@ -618,6 +676,7 @@ def run_once(project: Path, trigger: str, config: dict) -> Path | None:
         "first_message": messages[0]["id"],
         "last_message": messages[-1]["id"],
         "started": _now(),
+        "started_at": time.time(),  # 细则 16.1: compared with the compaction marker, finer than a second
         "code": {"snapshot_time": _now()},
         "notes": [],
     }
@@ -629,7 +688,17 @@ def run_once(project: Path, trigger: str, config: dict) -> Path | None:
         processed = L.preprocess(messages)
         with open(run / "ledger.jsonl", "w", encoding="utf-8") as f:
             f.writelines(json.dumps(m, ensure_ascii=False) + "\n" for m in processed)
-        info["code"] = {**FLOW.code_version(project), "snapshot_time": _now()}
+        chars, limit = L.ledger_chars(processed), int(config["ledger"]["max_chars"])
+        if chars > limit:  # 细则 15.4 长度上限: never truncate, stop and say so
+            raise RunStop(
+                f"需求记录过长：预处理后 {chars} 个字符，上限 {limit}（ledger.max_chars）。"
+                "请用 cv new 开始新的需求记录，并把仍然有效的需求重新说一遍（细则 15.4）"
+            )
+        info["code"] = {
+            **FLOW.code_version(project),
+            "fingerprint": code_fingerprint(project, config),
+            "snapshot_time": _now(),
+        }
         S.write_json(run / "run.json", info)
         info["notes"] = snapshot(project, snap, config)
         S.write_json(run / "run.json", info)
@@ -660,7 +729,7 @@ def run_once(project: Path, trigger: str, config: dict) -> Path | None:
                     f"工作流没有完成（退出码 {out.returncode}）：{(out.stderr or out.stdout).strip()[-500:]}",
                     invalid=False,
                 )
-    except SnapshotError as e:
+    except (SnapshotError, RunStop) as e:
         _stop_report(run, str(e), invalid=False)
     except Exception as e:  # 细则 16.2: the run stops with the reason, never silently
         _stop_report(run, f"启动器出错：{type(e).__name__}: {e}", invalid=False)
@@ -763,16 +832,21 @@ def hook(event: str) -> int:
     config = _config(project)
     if event == "record":
         text = payload.get("text") or ""
+        if payload.get("side_question"):  # 细则 15.2: answered aside; the main agent never sees it
+            return 0
         if text.strip() and not text.lstrip().startswith("/"):
             L.append_message(project, payload.get("session_id", ""), text, bool(payload.get("injected")))
         return 0
     if event == "turn":
-        if (
-            config["auto"]["enabled"]
-            and payload.get("status") == "ok"
-            and len(new_messages(project)) >= config["auto"]["min_new_messages"]
-        ):
-            launch(project, "一轮结束")
+        if config["auto"]["enabled"] and payload.get("status") == "ok":
+            why = turn_trigger(project, config)
+            if why:
+                launch(project, why)
+        return 0
+    if event == "compact":
+        # 细则 16.1: only the main agent's compaction that folds whole turns into a summary counts.
+        if "sub_agent" not in payload and payload.get("trigger") in ("phase3", "phase4"):
+            S.write_text(S.ensure_private(S.project_dir(project)) / "compacted", repr(time.time()))
         return 0
     if event == "session_end":
         if config["auto"]["on_session_end"] and new_messages(project):

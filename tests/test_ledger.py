@@ -81,10 +81,40 @@ def test_consolidation_errors():
         "M2 的去向不合法",
         "不是更早的消息",
         "M1（需求）没有被 R 的任何一条引用",
-        "没有后来的更正或撤销指向它",
+        "没有后来的更正、隐含更正或撤销指向它",
         "VIP 没有出现在它的原话片段中",
     ):
         assert expect in joined, expect
+
+
+def test_implicit_correction():
+    """细则 15.4 前后矛盾: an unannounced change is 隐含更正 Mk; Mk must be 已被更正; the later text is quoted."""
+    ledger = msgs("每 3 秒刷新一次。", "每 5 秒刷新一次。")
+    ok = answer(
+        [{"text": "每 5 秒刷新一次。", "quotes": [{"from": "M2", "text": "每 5 秒刷新一次"}]}],
+        {"M1": "已被更正", "M2": "隐含更正 M1"},
+    )
+    data, errors = L.check_consolidation(ok, ledger)
+    assert errors == [] and data["messages"]["M2"] == "隐含更正 M1"
+    kept = answer(
+        [
+            {
+                "text": "每 5 秒刷新一次。",
+                "quotes": [{"from": "M1", "text": "每 3 秒"}, {"from": "M2", "text": "每 5 秒"}],
+            }
+        ],
+        {"M1": "需求", "M2": "隐含更正 M1"},
+    )
+    _, errors = L.check_consolidation(kept, ledger)
+    assert any("应标为已被更正" in e for e in errors)
+    _, errors = L.check_consolidation(answer(ok_entries := [{"text": "x", "quotes": [{"from": "M2", "text": "5"}]}],
+                                             {"M1": "已被更正", "M2": "隐含更正"}), ledger)  # fmt: skip
+    assert any("去向不合法" in e for e in errors) and ok_entries
+
+
+def test_ledger_chars_counts_what_the_subtask_reads():
+    """细则 15.4 长度上限: dropped messages do not count."""
+    assert L.ledger_chars([{"text": "abc", "dropped": False}, {"text": "defg", "dropped": True}]) == 3
 
 
 def test_consolidation_input_skips_dropped():

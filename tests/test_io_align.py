@@ -286,3 +286,45 @@ def test_accumulation_mode_shows_the_cited_messages(tmp_path):
     text = FLOW._io_requirement(run)
     assert "M2（更正 M1）" in text and "5 2 7" in text
     assert "最大值" not in text
+
+
+def test_inputs_on_which_derive_fails_are_not_frozen(tmp_path):
+    """细则 11.12 输入预检: an input whose derive raises or blows memory is dropped before freezing; the
+    examples stay, and the count and first reason are kept."""
+    src = MODULE.replace(
+        "a = list(map(int, input_text.split()[1:]))",
+        'a = list(map(int, input_text.split()[1:]))\n    if len(a) > 3:\n        raise MemoryError("too big")',
+    )
+    (tmp_path / IO.MODULE).write_text(src)
+    m = IO.Module(tmp_path / IO.MODULE, IO.settings({}, {}))
+    try:
+        examples = [["3\n5 2 7\n", "2\n"]]
+        inputs = ["3\n5 2 7\n", "1\n4\n", "5\n1 2 3 4 5\n", "2\n0 0\n"]
+        pre = IO.precheck_inputs(m, inputs, examples, m.cfg)
+    finally:
+        m.close()
+    assert pre["inputs"] == ["3\n5 2 7\n", "1\n4\n", "2\n0 0\n"]
+    assert (pre["generated"], pre["dropped"]) == (3, 1)
+    assert "MemoryError" in pre["first"]
+    assert pre["derived"][1]["derive"]["ok"]["值"] == {"最小值": 4, "个数": 1}
+
+
+def test_runs_use_the_frozen_derive(tmp_path, module):
+    """细则 11.12 输入预检: at run time skip and derive come from io_derived.json, not from a new call."""
+    run = tmp_path / "run"
+    S.ensure_private(run / "align")
+    shutil.copy(module.dir / IO.MODULE, run / "align" / IO.MODULE)
+    w = tmp_path / "w"
+    w.mkdir()
+    (w / "main.py").write_text("a = list(map(int, open(0).read().split()[1:]))\nprint(min(a))\n")
+    examples = [["3\n5 2 7\n", "2\n"]]
+    pre = IO.precheck_inputs(module, ["3\n5 2 7\n", "2\n4 1\n"], examples, module.cfg)
+    pre["derived"][1]["derive"]["ok"]["值"]["最小值"] = 999  # a frozen value differing from a fresh derive
+    S.write_json(run / "align" / IO.INPUTS, pre["inputs"])
+    S.write_json(run / "align" / IO.DERIVED, pre["derived"])
+    frozen = {"kind": "io", "checks": [], "align_failures": {}, "excluded": {},
+              "io": {"settings": {"command": "python3 -I main.py"}, "examples": examples, "example_of": {},
+                     "example_props": [], "derived": [], "kills": {"R1": 3, "R2": 0}}}  # fmt: skip
+    recs = IO.run(run, w, PROPS, frozen, set(), {"budget": 600})
+    summary = RUN.summarize(recs, PROPS, frozen)["propositions"]
+    assert summary["R1"]["result"] == M.VIOLATED

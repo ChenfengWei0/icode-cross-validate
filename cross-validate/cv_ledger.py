@@ -12,8 +12,9 @@ import cv_state as S
 
 REPORT_MARKER = "交叉验证可信度报告"
 PLACEHOLDER = "〔已省略：粘贴的代码或日志〕"
-DISPOSITIONS = ("需求", "补充", "更正", "撤销", "已被更正", "非需求")
-MUST_QUOTE = ("需求", "补充", "更正")
+DISPOSITIONS = ("需求", "补充", "更正", "隐含更正", "撤销", "已被更正", "非需求")
+MUST_QUOTE = ("需求", "补充", "更正", "隐含更正")
+POINTING = ("更正", "隐含更正", "撤销")  # 细则 15.4: dispositions that name an earlier message
 ASCII_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]+")
 FENCE = re.compile(r"(```|~~~).*?(?:\1|\Z)", re.DOTALL)
 STACK_LINE = re.compile(
@@ -137,8 +138,8 @@ def check_consolidation(answer: str, messages: list[dict]) -> tuple[dict | None,
         if mid not in by_id or by_id[mid]["dropped"]:
             errors.append(f"去向中有不存在的消息 {mid}")
             continue
-        m = re.fullmatch(r"(需求|补充|更正|撤销|已被更正|非需求)(?:\s*(M\d+))?", str(value).strip())
-        if not m or (m.group(1) in ("更正", "撤销")) != bool(m.group(2)):
+        m = re.fullmatch(r"(需求|补充|隐含更正|更正|撤销|已被更正|非需求)(?:\s*(M\d+))?", str(value).strip())
+        if not m or (m.group(1) in POINTING) != bool(m.group(2)):
             errors.append(f"消息 {mid} 的去向不合法：{value}")
             continue
         kind, target = m.group(1), m.group(2)
@@ -177,9 +178,11 @@ def check_consolidation(answer: str, messages: list[dict]) -> tuple[dict | None,
     for mid, (kind, _) in parsed.items():
         if kind in MUST_QUOTE and mid not in quoted:
             errors.append(f"消息 {mid}（{kind}）没有被 R 的任何一条引用")
-        superseded = any(t == mid and k in ("更正", "撤销") and _num(o) > _num(mid) for o, (k, t) in parsed.items())
+        superseded = any(t == mid and k in POINTING and _num(o) > _num(mid) for o, (k, t) in parsed.items())
         if kind == "已被更正" and not superseded:
-            errors.append(f"消息 {mid} 标为已被更正，但没有后来的更正或撤销指向它")
+            errors.append(f"消息 {mid} 标为已被更正，但没有后来的更正、隐含更正或撤销指向它")
+        if kind == "隐含更正" and parsed.get(_target_of(parsed, mid), ("",))[0] != "已被更正":
+            errors.append(f"消息 {mid} 隐含更正了 {_target_of(parsed, mid)}，那条消息应标为已被更正")
     if not entries:
         errors.append("R 为空")
     dispositions = {mid: (kind + (f" {target}" if target else "")) for mid, (kind, target) in parsed.items()}
@@ -187,6 +190,15 @@ def check_consolidation(answer: str, messages: list[dict]) -> tuple[dict | None,
         if m["dropped"]:
             dispositions[m["id"]] = "非需求"
     return {"entries": entries, "messages": dispositions}, errors
+
+
+def _target_of(parsed: dict[str, tuple[str, str | None]], mid: str) -> str:
+    return parsed[mid][1] or ""
+
+
+def ledger_chars(messages: list[dict]) -> int:
+    """细则 15.4 长度上限: the characters the subtask would read, after preprocessing."""
+    return sum(len(m["text"]) for m in messages if not m.get("dropped"))
 
 
 def build_requirement(entries: list[dict], messages: dict[str, str], mode: str) -> tuple[dict, str]:

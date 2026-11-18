@@ -26,7 +26,8 @@ HERE = Path(__file__).resolve().parent
 HARNESS = HERE / "cv_io_harness.py"
 MODULE = "io_module.py"
 INPUTS = "io_inputs.json"
-DEFAULTS = {"inputs": 150, "timeout": 6, "memory_mb": 4096, "tolerance": 1e-6, "mutants": 20}
+DERIVED = "io_derived.json"
+DEFAULTS = {"inputs": 150, "timeout": 6, "memory_mb": 4096, "tolerance": 1e-6, "mutants": 20, "min_kept": 0.5}
 TRIAL_INPUTS = 60
 MIN_DISTINCT = 10
 UNCHECKABLE = ("calls", "only")  # 细则 11.12: no one reads the code
@@ -88,7 +89,10 @@ class Module:
             return json.loads(out["stdout"].decode("utf-8"))
         except (UnicodeDecodeError, ValueError):
             tail = out["stderr"].decode("utf-8", "replace")[-300:]
-            return {"load_error": f"模块异常退出（退出码 {out['exit']}）：{tail}"}
+            head = out["stdout"][:80].decode("utf-8", "replace")
+            return {
+                "load_error": f"模块异常退出（退出码 {out['exit']}，输出 {len(out['stdout'])} 字节，开头 {head!r}）：{tail}"
+            }
 
 
 # ---------------------------------------------------------------------------------------------------
@@ -427,7 +431,7 @@ def trial(module: Module, props: dict[str, dict], entities: set[str], requiremen
             why = v.get("error") or "；".join(map(str, v["ok"]))
             out["problems"].append(f"生成的输入被判为不合法：{why[:200]}\n输入：{t[:300]}")
             break
-    skips = module.call("observe", [{"input": t} for t in texts])
+    skips = module.call("skip", texts)
     if "load_error" in skips:
         out["problems"].append(f"skip 出错：{skips['load_error']}")
         return out
@@ -493,6 +497,44 @@ def freeze_inputs(module: Module, examples: list[list[str]], n: int) -> list[str
             seen.add(norm_input(t))
             out.append(t)
     return out
+
+
+def precheck_error(item: dict) -> str | None:
+    """细则 11.12 输入预检: why skip/derive cannot be computed on this input, or None."""
+    if "load_error" in item:
+        return item["load_error"]
+    for part in ("skip", "derive"):
+        if "error" in item.get(part, {}):
+            return f"{part} 出错：{item[part]['error']}"
+    if not isinstance(item["skip"]["ok"], list):
+        return "skip 应返回名称的列表"
+    der = item["derive"]["ok"]
+    if not isinstance(der, dict) or not set(der) <= {"实体", "值"}:
+        return 'derive 应返回 {"实体": {…}, "值": {…}}'
+    if not all(isinstance(der.get(k, {}), dict) for k in ("实体", "值")):
+        return "derive 的 实体、值 应是对象"
+    return None
+
+
+def precheck_inputs(module: Module, inputs: list[str], examples: list[list[str]], cfg: dict) -> dict:
+    """细则 11.12 输入预检: skip and derive on each input alone, before freezing. Generated inputs on which they
+    fail are not frozen; examples always stay (the trial already required them). The results are frozen with
+    the inputs and used at run time. Only the module and the inputs take part, never the main task's product."""
+    ex = {norm_input(a) for a, _ in examples}
+    kept, derived, dropped, first, generated = [], [], 0, None, 0
+    for t in inputs:
+        is_example = norm_input(t) in ex
+        generated += not is_example
+        out = module.call("observe", [{"input": t}], timeout=float(cfg["timeout"]))
+        item = (out.get("items") or [None])[0]
+        why = out.get("load_error") or (precheck_error(item) if item is not None else "模块没有返回结果")
+        if why is None or is_example:
+            kept.append(t)
+            derived.append(None if why else {"skip": item["skip"], "derive": item["derive"]})
+        else:
+            dropped += 1
+            first = first or why
+    return {"inputs": kept, "derived": derived, "generated": generated, "dropped": dropped, "first": first}
 
 
 def mutants(output: str, others: list[str], limit: int) -> list[str]:
@@ -572,6 +614,7 @@ def run(run_dir: Path, w: Path, props: dict[str, dict], frozen: dict, entities: 
     tol = float(cfg["tolerance"])
     align = Path(run_dir) / "align"
     inputs = S.read_json(align / INPUTS)
+    derived = S.read_json(align / DERIVED)  # 细则 11.12 输入预检; absent in runs frozen before it
     examples, example_of = io["examples"], io["example_of"]
     ex_inputs = {i: norm_input(a) for i, (a, _) in enumerate(examples, 1)}
     ex_props = set(io["example_props"])
@@ -602,8 +645,14 @@ def run(run_dir: Path, w: Path, props: dict[str, dict], frozen: dict, entities: 
                     _record(recs[pid], verdicts[pid], M.CHECK_FAILED, cex)
                 continue
             output = out["stdout"].decode("utf-8", "replace")
-            obs = module.call("observe", [{"input": inp, "output": output}], timeout=float(cfg["timeout"]) * 3 + 5)
-            item = (obs.get("items") or [None])[0]
+            pre = derived[n] if derived is not None and n < len(derived) else None
+            if pre is not None:  # 细则 11.12: skip and derive frozen by the pre-check
+                obs = module.call("trace", [{"input": inp, "output": output}], timeout=float(cfg["timeout"]) + 5)
+                got = (obs.get("items") or [None])[0]
+                item = {**pre, **got} if got is not None else None
+            else:
+                obs = module.call("observe", [{"input": inp, "output": output}], timeout=float(cfg["timeout"]) * 3 + 5)
+                item = (obs.get("items") or [None])[0]
             if item is None:
                 err, states, unreadable = obs.get("load_error", "模块没有回答"), None, None
             else:
