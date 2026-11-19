@@ -7,6 +7,7 @@ judged with finite-trace semantics: weak next, G, W, R hold at the end, strong n
 
 from __future__ import annotations
 
+import itertools
 import json
 import time
 
@@ -50,6 +51,7 @@ class Trace:
         self.states = states
         self.entities = entities
         self.tolerance = tolerance  # 细则 11.12: io alignment compares non-integers relatively
+        self.end_final = False  # 细则 11.12: the trace ends where the run ends (set by judge)
         # 细则 12.4: entities listed in some state; the others are singletons named by the entity.
         self.listed: set[str] = set()
         for k, state in enumerate(states):
@@ -62,6 +64,13 @@ class Trace:
                 if not isinstance(xs, list) or not all(_scalar(x) for x in xs):
                     raise AlignError(f"状态 {k} 的 实体.{name} 应是由字符串或数组成的列表（细则 12.4）")
                 self.listed.add(name)
+        # Per state, every listed individual, for present(): a set answers what scanning the lists answered.
+        self._listed_sets: list[set | None] = [
+            ({x for xs in st["实体"].values() for x in xs} if isinstance(st.get("实体"), dict) else None)
+            for st in states
+        ]
+        # 细则 12.4: individuals are compared as text (the number 1 and the string 「1」 are one individual)
+        self._listed_text: list[set | None] = [None if xs is None else {str(x) for x in xs} for xs in self._listed_sets]
 
     def __len__(self) -> int:
         return len(self.states)
@@ -77,12 +86,19 @@ class Trace:
             if entity is None:
                 return sorted(self.entities)
             return [entity]
-        if entity is None:
-            return [x for xs in listed.values() if isinstance(xs, list) for x in xs]
+        if entity is None:  # 细则 12.4: every listed individual, each number once
+            return _unique([x for xs in listed.values() if isinstance(xs, list) for x in xs])
+        if entity not in self.listed:
+            return [entity]  # 细则 12.4: never listed: one individual, named by the entity
         xs = listed.get(entity, [])
         if not isinstance(xs, list):
             raise AlignError(f"状态 {k} 的 实体.{entity} 不是列表")
-        return xs
+        return _unique(xs)
+
+    def member(self, k: int, entity: str, ind) -> bool:
+        """细则 12.4: ind is an individual of entity in state k (compared as text)."""
+        xs = self.individuals(k, entity)
+        return ind in xs or str(ind) in {str(x) for x in xs}
 
     def constant(self, k: int, entity: str):
         if entity not in self.listed:
@@ -98,10 +114,16 @@ class Trace:
         return xs[0]
 
     def present(self, k: int, ind) -> bool:
-        listed = self.state(k).get("实体")
-        if not isinstance(listed, dict):
+        self.state(k)
+        listed = self._listed_sets[k]
+        if listed is None:
             return True
-        if any(ind in xs for xs in listed.values()):
+        try:
+            if ind in listed:
+                return True
+        except TypeError:  # an unhashable value is never a listed individual (they are scalars, 细则 12.4)
+            return False
+        if _scalar(ind) and str(ind) in self._listed_text[k]:
             return True
         return isinstance(ind, str) and ind in self.entities and ind not in self.listed
 
@@ -113,18 +135,32 @@ class Trace:
             raise AlignError(f"状态 {k} 缺少 {key}（细则 12.3）")
         if key in values:
             return values[key]
-        alias = _key(name, [self._entity_of_only(k, i) for i in ids])
-        if alias not in values:
-            raise AlignError(f"状态 {k} 缺少 {key}（细则 12.3）")
-        return values[alias]
+        # 细则 12.4: the only individual of an entity may be written by the entity's name. Several entities can
+        # have the same only individual (矩阵 [1] and 子矩阵 [1]); the key the module wrote decides which.
+        for names in itertools.product(*(self._entities_of_only(k, i) for i in ids)):
+            alias = _key(name, list(names))
+            if alias in values:
+                return values[alias]
+        raise AlignError(f"状态 {k} 缺少 {key}（细则 12.3）")
 
-    def _entity_of_only(self, k: int, ind):
+    def _entities_of_only(self, k: int, ind) -> list:
         listed = self.state(k).get("实体")
+        out = [ind]
         if isinstance(listed, dict):
             for entity, xs in listed.items():
-                if isinstance(xs, list) and len(xs) == 1 and xs[0] == ind and type(xs[0]) is type(ind):
-                    return entity
-        return ind
+                if isinstance(xs, list) and len(xs) == 1 and str(xs[0]) == str(ind):
+                    out.append(entity)
+        return out
+
+
+def _unique(xs: list) -> list:
+    seen, out = set(), []
+    for x in xs:
+        key = (type(x).__name__, x) if _scalar(x) else repr(x)
+        if key not in seen:
+            seen.add(key)
+            out.append(x)
+    return out
 
 
 def _scalar(x) -> bool:
@@ -135,7 +171,9 @@ def _key(name: str, ids: list) -> str:
     return name if not ids else f"{name}({','.join(str(i) for i in ids)})"
 
 
-def _ind(n: dict, tr: Trace, k: int):
+def _ind(n: dict, tr: Trace, k: int, env: dict | None = None):
+    if n["op"] == "var" and env and n["name"] in env:
+        return env[n["name"]]
     if n["op"] == "const":
         return tr.constant(k, n["name"])
     if n["op"] in ("ind", "lit"):
@@ -145,27 +183,29 @@ def _ind(n: dict, tr: Trace, k: int):
     raise AlignError("参数应是个体")
 
 
-def term_value(n: dict, tr: Trace, k: int):
+def term_value(n: dict, tr: Trace, k: int, env: dict | None = None):
     op = n["op"]
+    if op == "var" and env and n["name"] in env:
+        return env[n["name"]]
     if op in ("lit", "ind"):
         return n["value"]
     if op == "const":
         return tr.constant(k, n["name"])
     if op == "at":
-        return term_value(n["args"][0], tr, n["k"])
+        return term_value(n["args"][0], tr, n["k"], env)
     if op == "term":
         if n["name"] == F.ACTION and not n["args"]:
             state = tr.state(k)
             if "动作" not in state:
                 raise AlignError(f"状态 {k} 缺少 动作")
             return state["动作"]
-        ids = [_ind(a, tr, k) for a in n["args"]]
+        ids = [_ind(a, tr, k, env) for a in n["args"]]
         for i in ids:
             if not tr.present(k, i):
                 raise _Absent
         return tr.value(k, n["name"], ids)
     if op in F.ARITHMETIC:
-        a, b = (term_value(x, tr, k) for x in n["args"])
+        a, b = (term_value(x, tr, k, env) for x in n["args"])
         if not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in (a, b)):
             raise AlignError(f"算术的操作数不是数：{a!r}、{b!r}")
         if op == "div" and b == 0:
@@ -195,18 +235,20 @@ def compare(op: str, a, b, tolerance: float | None = None) -> bool:
         return not _same(a, b, tolerance)
     if not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in (a, b)):
         raise AlignError(f"大小比较的操作数不是数：{a!r}、{b!r}")
+    if tolerance is not None and _same(a, b, tolerance):  # 细则 11.12: equal within the tolerance
+        return op in ("le", "ge")
     return {"lt": a < b, "gt": a > b, "le": a <= b, "ge": a >= b}[op]
 
 
-def atom_value(n: dict, tr: Trace, k: int) -> bool:
+def atom_value(n: dict, tr: Trace, k: int, env: dict | None = None) -> bool:
     op = n["op"]
     try:
         if op == "at":
-            return atom_value(n["args"][0], tr, n["k"])
+            return atom_value(n["args"][0], tr, n["k"], env)
         if op == "pred":
             if n["name"] in tr.entities:
-                return _ind(n["args"][0], tr, k) in tr.individuals(k, n["name"])
-            ids = [_ind(a, tr, k) for a in n["args"]]
+                return tr.member(k, n["name"], _ind(n["args"][0], tr, k, env))
+            ids = [_ind(a, tr, k, env) for a in n["args"]]
             for i in ids:
                 if not tr.present(k, i):
                     return False
@@ -215,7 +257,7 @@ def atom_value(n: dict, tr: Trace, k: int) -> bool:
                 raise AlignError(f"谓词 {_key(n['name'], ids)} 的值应是布尔值，实际为 {v!r}")
             return v
         if op in F.COMPARISONS:
-            a, b = (term_value(x, tr, k) for x in n["args"])
+            a, b = (term_value(x, tr, k, env) for x in n["args"])
             return compare(op, a, b, tr.tolerance)
     except _Absent:
         return False
@@ -226,27 +268,38 @@ def atom_value(n: dict, tr: Trace, k: int) -> bool:
     raise AlignError(f"不是原子：{op}")
 
 
-def holds(n: dict, tr: Trace, k: int) -> bool:
-    """A non-temporal formula at state k (quantifiers range over the individuals listed there)."""
+def holds(n: dict, tr: Trace, k: int, env: dict | None = None) -> bool:
+    """A non-temporal formula at state k (quantifiers range over the individuals listed there); env binds the
+    variables of enclosing quantifiers."""
     op = n["op"]
     if op == "not":
-        return not holds(n["args"][0], tr, k)
+        return not holds(n["args"][0], tr, k, env)
     # Every operand is evaluated, so a missing key is found even where the result is already known (细则 12.3).
     if op == "and":
-        return all([holds(a, tr, k) for a in n["args"]])  # noqa: C419 — no short circuit
+        return all([holds(a, tr, k, env) for a in n["args"]])  # noqa: C419 — no short circuit
     if op == "or":
-        return any([holds(a, tr, k) for a in n["args"]])  # noqa: C419 — no short circuit
+        return any([holds(a, tr, k, env) for a in n["args"]])  # noqa: C419 — no short circuit
     if op == "implies":
-        a, b = holds(n["args"][0], tr, k), holds(n["args"][1], tr, k)
+        a, b = holds(n["args"][0], tr, k, env), holds(n["args"][1], tr, k, env)
         return not a or b
     if op in F.QUANTIFIERS:
-        values = [holds(subst(n["args"][0], n["var"], i), tr, k) for i in tr.individuals(k, n.get("type"))]
+        body, var = n["args"][0], n["var"]
+        values = [holds(body, tr, k, {**(env or {}), var: i}) for i in tr.individuals(k, n.get("type"))]
         if op == "forall":
             return all(values)
         if op == "exists":
             return any(values)
         return sum(values) == 1
-    return atom_value(n, tr, k)
+    return atom_value(n, tr, k, env)
+
+
+# 细则 11.12: at the last state of a run, a quantifier whose body has no temporal operator is evaluated by holds()
+# with its variables bound in an environment, instead of a substituted copy of the body for every individual.
+_TIMED = set(F.TEMPORAL_OPS) | {"next", "X", "Xs", "R", "M", "Xcmp"}
+
+
+def _untimed(n: dict) -> bool:
+    return not any(m["op"] in _TIMED for m in F.walk(n))
 
 
 def subst(n: dict, name: str, value) -> dict:
@@ -348,11 +401,14 @@ def _junction(op: str, items: list[dict]) -> dict:
     return out[0] if len(out) == 1 else {"op": op, "args": out}
 
 
-def _later(kind: str, n: dict) -> dict:
+def _later(kind: str, n: dict, end: bool = False) -> dict:
     """An obligation on the next state: weak (holds if the trace ends) or strong (fails if it ends).
 
     Only Wk(⊤) = ⊤ and St(⊥) = ⊥ are equivalences on finite traces; Wk(⊥) and St(⊤) stay (细则 13.2).
+    When the trace is known to end here (end), the obligation is settled now, as finish() would settle it.
     """
+    if end:
+        return TRUE if kind == "Wk" else FALSE
     if n["op"] == "T" and kind == "Wk":
         return TRUE
     if n["op"] == "⊥" and kind == "St":
@@ -378,6 +434,7 @@ def progress(n: dict, tr: Trace, k: int) -> dict:
     op = n["op"]
     if op in ("T", "⊥"):
         return n
+    end = tr.end_final and k == len(tr) - 1
     if op == "L":
         return TRUE if atom_value(n["atom"], tr, k) != n["neg"] else FALSE
     if op == "Xcmp":
@@ -385,28 +442,30 @@ def progress(n: dict, tr: Trace, k: int) -> dict:
             atom = _now_values(n["atom"], tr, k)
         except _Absent:
             atom = F.lit(False)  # 细则 10.3, 12.3: false at the next state, if there is one
-        return _later("St" if n["neg"] else "Wk", nnf(atom, n["neg"]))
+        return _later("St" if n["neg"] else "Wk", nnf(atom, n["neg"]), end)
     if op in ("and", "or"):
         return _junction(op, [progress(a, tr, k) for a in n["args"]])
     if op in ("Wk", "St"):
         return progress(n["args"][0], tr, k)
     if op == "X":
-        return _later("Wk", n["args"][0])
+        return _later("Wk", n["args"][0], end)
     if op == "Xs":
-        return _later("St", n["args"][0])
+        return _later("St", n["args"][0], end)
     if op == "G":
-        return _junction("and", [progress(n["args"][0], tr, k), _later("Wk", n)])
+        return _junction("and", [progress(n["args"][0], tr, k), _later("Wk", n, end)])
     if op == "F":
-        return _junction("or", [progress(n["args"][0], tr, k), _later("St", n)])
+        return _junction("or", [progress(n["args"][0], tr, k), _later("St", n, end)])
     a, b = n["args"] if op in ("U", "W", "R", "M") else (None, None)
     if op in ("U", "W"):
-        keep = _later("St" if op == "U" else "Wk", n)
+        keep = _later("St" if op == "U" else "Wk", n, end)
         return _junction("or", [progress(b, tr, k), _junction("and", [progress(a, tr, k), keep])])
     if op in ("R", "M"):
-        keep = _later("Wk" if op == "R" else "St", n)
+        keep = _later("Wk" if op == "R" else "St", n, end)
         return _junction("and", [progress(b, tr, k), _junction("or", [progress(a, tr, k), keep])])
     if op == "Q":
         q = n["node"]
+        if end and _untimed(q):
+            return TRUE if holds(q, tr, k) != n["neg"] else FALSE
         parts = []
         domain = tr.individuals(k, q.get("type"))
         body = q["args"][0]
@@ -448,14 +507,19 @@ def judge(
     max_states: int | None = None,
     deadline: float | None = None,
     tolerance: float | None = None,
+    end_final: bool = False,
 ) -> dict:
-    """Judge one proposition on one trace. Raises AlignError when the trace cannot be used."""
+    """Judge one proposition on one trace. Raises AlignError when the trace cannot be used.
+
+    end_final: the trace ends where the run ends (细则 11.12), so obligations on later states are settled at the
+    last state as finish() settles them; the verdict is the same, without carrying them as a residual."""
     if not states:
         raise AlignError("轨迹为空（细则 12.6）")
     truncated = False
     if max_states is not None and len(states) > max_states:
         states, truncated = states[:max_states], True
     tr = Trace(states, entities, tolerance)
+    tr.end_final = end_final and not truncated
     cls = F.classify(tree)
     if cls == "结构":
         raise AlignError("结构命题不能用 trace 检查（细则 11.4）")

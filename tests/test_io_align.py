@@ -332,3 +332,85 @@ def test_runs_use_the_frozen_derive(tmp_path, module):
     recs = IO.run(run, w, PROPS, frozen, set(), {"budget": 600})
     summary = RUN.summarize(recs, PROPS, frozen)["propositions"]
     assert summary["R1"]["result"] == M.VIOLATED
+
+
+SKIP_MODULE = MODULE.replace(
+    'return {"值": {"最小值": min(a), "个数": len(a)}}',
+    'return {"值": ({"最小值": min(a)} if len(a) <= 3 else {}) | {"个数": len(a)}}',
+).replace(
+    "def skip(input_text):\n    return []",
+    "def skip(input_text):\n    return [] if len(input_text.split()) <= 4 else ['最小值']",
+)
+
+
+def test_represents_is_not_judged_on_an_input_whose_skip_lists_its_name(tmp_path):
+    """细则 11.12 运行第 3 步: 表示(C) is not judged on a run where skip lists C, like any other proposition."""
+    d = decls()
+    rep = {"id": "R3", "source": "推理", "basis": "", "tree": F.parse("表示(最小值)", d), "formula": "表示(最小值)"}
+    rep["class"] = F.classify(rep["tree"])
+    props = {"R2": PROPS["R2"], "R3": rep}
+    run = tmp_path / "run"
+    S.ensure_private(run / "align")
+    (run / "align" / IO.MODULE).write_text(SKIP_MODULE)
+    w = tmp_path / "w"
+    w.mkdir()
+    (w / "main.py").write_text("a = list(map(int, open(0).read().split()[1:]))\nprint(min(a))\n")
+    S.write_json(run / "align" / IO.INPUTS, ["3\n5 2 7\n", "5\n1 2 3 4 5\n"])
+    frozen = {"kind": "io", "checks": [], "align_failures": {}, "excluded": {},
+              "io": {"settings": {"command": "python3 -I main.py"}, "examples": [["3\n5 2 7\n", "2\n"]],
+                     "example_of": {}, "example_props": [], "derived": [], "kills": {"R2": 0}}}  # fmt: skip
+    recs = IO.run(run, w, props, frozen, set(), {"budget": 600})
+    assert {r["proposition"]: r["result"] for r in recs}["R3"] == M.PASSED
+
+
+def test_trial_reports_a_represents_whose_value_the_module_never_gives(module):
+    """细则 11.12 试跑第 4 项: 表示(C) uses C; a module that never gives C is sent back, not found at run time."""
+    d = decls()
+    d.category["余数"], d.params["余数"] = "数量", []
+    tree = F.parse("表示(余数)", d)
+    props = {**PROPS, "R3": {"id": "R3", "source": "推理", "basis": "", "tree": tree, "formula": "表示(余数)",
+                             "class": F.classify(tree)}}  # fmt: skip
+    out = IO.trial(module, props, set(), REQ, set(), module.cfg)
+    assert any("R3" in p and "余数" in p for p in out["problems"])
+
+
+def test_represents_skipped_on_every_run_was_never_judged(tmp_path):
+    """细则 11.12 结果: 表示(C) that skip set aside on every run was judged by no run: 对齐失败, not a failure."""
+    d = decls()
+    rep = {"id": "R3", "source": "推理", "basis": "", "tree": F.parse("表示(最小值)", d), "formula": "表示(最小值)"}
+    rep["class"] = F.classify(rep["tree"])
+    run = tmp_path / "run"
+    S.ensure_private(run / "align")
+    (run / "align" / IO.MODULE).write_text(SKIP_MODULE)
+    w = tmp_path / "w"
+    w.mkdir()
+    (w / "main.py").write_text("a = list(map(int, open(0).read().split()[1:]))\nprint(min(a))\n")
+    S.write_json(run / "align" / IO.INPUTS, ["5\n1 2 3 4 5\n", "4\n4 3 2 1\n"])
+    frozen = {"kind": "io", "checks": [], "align_failures": {}, "excluded": {},
+              "io": {"settings": {"command": "python3 -I main.py"}, "examples": [["3\n5 2 7\n", "2\n"]],
+                     "example_of": {}, "example_props": [], "derived": [], "kills": {}}}  # fmt: skip
+    recs = {r["proposition"]: r for r in IO.run(run, w, {"R3": rep}, frozen, set(), {"budget": 600})}
+    assert recs["R3"]["result"] == M.ALIGN_FAILED
+
+
+def test_a_call_proposition_presumed_false_is_final():
+    """细则 11.12: the run has ended, so a call proposition presumed false is violated, as for the others."""
+    tree = {"op": "F", "args": [{"op": "eq", "args": [{"op": "lit", "args": [], "value": 5},
+                                                       {"op": "lit", "args": [], "value": 4}]}]}  # fmt: skip
+    assert IO.judge_call({"tree": tree}, {}, 1e-6) == M.VIOLATED
+
+
+def test_paired_words_have_mutants():
+    """细则 11.12 变异对照: YES/NO and who-wins answers get a mutant by swapping the word."""
+    out = IO.mutants("YES\nNO\nAlice\n", [], 4)
+    assert "NO\nNO\nAlice\n" in out and "YES\nYES\nAlice\n" in out and "YES\nNO\nBob\n" in out
+    assert not any("NOSE" in m for m in IO.mutants("NOSE\n", [], 4))  # whole words only
+
+
+def test_step_propositions_are_vacuous_on_a_one_state_run():
+    """细则 11.12 一个状态的轨迹: 动作, ′ (even negated) and a subscript ≥ 1 are not judged on one state."""
+    d = decls()
+    states = [{"值": {"答案": 2, "最小值": 2, "个数": 3}}]
+    for formula in ("G(答案′ ≠ 答案 → 个数 = 0)", "答案₁ = 8"):
+        p = {"tree": F.parse(formula, d)}
+        assert IO.judge(p, states, set(), 1e-6)["result"] == M.SATISFIED

@@ -156,9 +156,16 @@ def uses_steps(tree: dict) -> bool:
     return any(n["op"] in STEP_OPS or (n["op"] == "term" and n.get("name") == "动作") for n in F.walk(tree))
 
 
+def one_state_vacuous(tree: dict) -> bool:
+    """细则 11.12 一个状态的轨迹: X, ′, 动作 or a state subscript ≥ 1 say nothing about a one-state run."""
+    return uses_steps(tree) or any(n["op"] == "at" and n.get("k", 0) >= 1 for n in F.walk(tree))
+
+
 def judge(prop: dict, states: list[dict], entities: set[str], tolerance: float) -> dict:
     """细则 11.12: the end of the trace is the end of the run, so presumed results are final."""
-    r = M.judge(prop["tree"], states, entities, tolerance=tolerance)
+    if len(states) == 1 and one_state_vacuous(prop["tree"]):
+        return {"result": M.SATISFIED, "state": 0, "truncated": False, "vacuous": True}
+    r = M.judge(prop["tree"], states, entities, tolerance=tolerance, end_final=True)
     final = {M.PRESUMED_FALSE: M.VIOLATED, M.PRESUMED_TRUE: M.SATISFIED}
     return {**r, "result": final.get(r["result"], r["result"])}
 
@@ -204,13 +211,18 @@ def judge_call(prop: dict, values: dict, tolerance: float) -> str:
         tree = substitute(prop["tree"], values)
     except M.AlignError:
         return M.CHECK_FAILED  # the program failed where the proposition expected a result
-    return M.judge(tree, [{"值": {}}], set(), tolerance=tolerance)["result"]
+    r = M.judge(tree, [{"值": {}}], set(), tolerance=tolerance, end_final=True)["result"]
+    return {M.PRESUMED_FALSE: M.VIOLATED, M.PRESUMED_TRUE: M.SATISFIED}.get(r, r)  # 细则 11.12: the run has ended
+
+
+def _represented_name(tree: dict) -> str:
+    c = tree["args"][0]
+    return c.get("name") or str(c.get("value"))
 
 
 def represented(tree: dict, states: list[dict]) -> bool:
     """表示(C) under io alignment: C has a value (or is a listed entity) in every state."""
-    c = tree["args"][0]
-    name = c.get("name") or str(c.get("value"))
+    name = _represented_name(tree)
     for s in states:
         keys = {k.split("(")[0] for k in s.get("值", {})}
         if name not in keys and name not in (s.get("实体") or {}):
@@ -382,6 +394,7 @@ def trial(module: Module, props: dict[str, dict], entities: set[str], requiremen
         return out
     ex_inputs = {i: norm_input(a) for i, (a, _) in enumerate(examples, 1)}
     derived: set[str] = set()
+    missing_rep: set[str] = set()
     for i, ((a, _b), item) in enumerate(zip(examples, obs["items"], strict=False), 1):  # items 4, 5
         sk = item["skip"]
         if "error" in sk or sk.get("ok"):
@@ -393,6 +406,12 @@ def trial(module: Module, props: dict[str, dict], entities: set[str], requiremen
         derived |= {k.split("(")[0] for k in item["derive"]["ok"].get("值", {})}
         derived |= set(item["derive"]["ok"].get("实体", {}))
         for pid, p in props.items():
+            if p["tree"]["op"] == "struct" and struct_kind(p) == "represents":  # item 4: the key 表示(C) uses
+                if pid not in missing_rep and not represented(p["tree"], states):
+                    missing_rep.add(pid)
+                    name = _represented_name(p["tree"])
+                    out["problems"].append(f"示例 {i} 上 {pid} 无法判定：轨迹中没有 {name} 的值，表示({name}) 读不出它")
+                continue
             if pid in out["unmapped"] or struct_kind(p) is not None or calls_of(p["tree"]):
                 continue
             if not _applies(pid, p, a, set(), ex_inputs, ex_props, example_of):
@@ -537,11 +556,21 @@ def precheck_inputs(module: Module, inputs: list[str], examples: list[list[str]]
     return {"inputs": kept, "derived": derived, "generated": generated, "dropped": dropped, "first": first}
 
 
+# 细则 11.12 变异对照: paired words, so that yes/no and who-wins answers have mutants too
+WORD_PAIRS = [("YES", "NO"), ("Yes", "No"), ("yes", "no"), ("TRUE", "FALSE"), ("True", "False"), ("true", "false"),
+              ("POSSIBLE", "IMPOSSIBLE"), ("Possible", "Impossible"), ("Alice", "Bob"), ("First", "Second")]  # fmt: skip
+_FLIP = {a: b for x, y in WORD_PAIRS for a, b in ((x, y), (y, x))}
+_WORD = re.compile(
+    r"(?<![A-Za-z])(" + "|".join(sorted(map(re.escape, _FLIP), key=len, reverse=True)) + r")(?![A-Za-z])"
+)
+
+
 def mutants(output: str, others: list[str], limit: int) -> list[str]:
     out = [
         output[: m.start()] + str(int(m.group()) + 1) + output[m.end() :]
         for m in list(re.finditer(r"-?\d+", output))[:limit]
     ]
+    out += [output[: m.start()] + _FLIP[m.group()] + output[m.end() :] for m in list(_WORD.finditer(output))[:limit]]
     lines = output.rstrip("\n").split("\n")
     out += ["", "\n".join(lines[:-1]) + ("\n" if len(lines) > 1 else ""), *others]
     seen, uniq = {output.strip()}, []
@@ -624,6 +653,7 @@ def run(run_dir: Path, w: Path, props: dict[str, dict], frozen: dict, entities: 
     recs = {pid: {"proposition": pid, "index": i, **blank, "judged": 0, "multi": 0} for i, pid in enumerate(live)}
     verdicts: dict[str, list[str]] = {pid: [] for pid in live}
     shown: dict[str, list[list[dict]]] = {pid: [] for pid in live}  # judged traces, for 表示 and 13.7
+    rep_skipped: set[str] = set()  # 表示 propositions some run did not judge because skip listed their name
     deadline = time.monotonic() + float(config.get("budget", 3600))
     wcopy = Path(tempfile.mkdtemp(prefix="cv-io-w-"))
     shutil.copytree(w, wcopy / "w", ignore=shutil.ignore_patterns(".git", "__pycache__"), symlinks=True)
@@ -677,8 +707,12 @@ def run(run_dir: Path, w: Path, props: dict[str, dict], frozen: dict, entities: 
                 if calls_of(p["tree"]):
                     continue
                 if struct_kind(p) is not None:
+                    # 细则 11.12 运行第 3 步: a name skip lists on this input is not judged here, 表示 included
                     if struct_kind(p) == "represents":
-                        shown[pid].append(states)
+                        if names_of(p["tree"]) & skipped:
+                            rep_skipped.add(pid)
+                        else:
+                            shown[pid].append(states)
                     continue
                 if not _applies(pid, p, inp, skipped, ex_inputs, ex_props, example_of):
                     continue
@@ -706,6 +740,9 @@ def run(run_dir: Path, w: Path, props: dict[str, dict], frozen: dict, entities: 
         rec = recs[pid]
         kind = struct_kind(p)
         if kind == "represents":
+            if not shown[pid] and pid in rep_skipped:  # skip listed C on every run that reached the judging
+                rec["result"], rec["reason"] = M.ALIGN_FAILED, "没有任何一次运行判定过它（细则 11.12）"
+                continue
             ok = bool(shown[pid]) and all(represented(p["tree"], s) for s in shown[pid])
             rec["result"] = M.PASSED if ok else M.CHECK_FAILED
             rec["reason"] = None if ok else "有的运行中读不出它的值"

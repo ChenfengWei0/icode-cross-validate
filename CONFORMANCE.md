@@ -95,7 +95,7 @@
 | 细则 11.9 | 通过 | 1 个测试：test_frozen_checks_run |
 | 细则 11.10 | 通过 | 2 个测试：test_alignment_prompt_asks_for_strict_checks_that_reach_the_hard_cases、test_prompts_ask_for_reachable_states_and_meaning_not_names |
 | 细则 11.11 | 通过 | 12 个测试：test_fragment、test_generated_code_agrees_with_the_checker、test_absent_individual_makes_atoms_false、test_cbmc_decides_for_every_input 等 |
-| 细则 11.12 | 通过 | 4 个测试：test_trial_passes_on_a_faithful_module、test_trial_reports_a_contradiction_on_the_examples、test_mutation_kills_only_count_discriminating_propositions、test_presumed_results_are_final_at_the_end_of_a_run |
+| 细则 11.12 | 通过 | 13 个测试：test_trial_passes_on_a_faithful_module、test_trial_reports_a_contradiction_on_the_examples、test_mutation_kills_only_count_discriminating_propositions、test_presumed_results_are_final_at_the_end_of_a_run 等 |
 | 细则 12.1 | 通过 | 1 个测试：test_trace_format |
 | 细则 12.2 | 通过 | 2 个测试：test_time_convention、test_prompt_shows_where_an_event_goes |
 | 细则 12.3 | 通过 | 5 个测试：test_values、test_no_contradiction_is_true、test_big_integers_exact、test_missing_key_after_violation 等 |
@@ -116,7 +116,7 @@
 | 细则 15.1 | 通过 | 3 个测试：test_init_rules、test_ignored_project_is_not_git、test_hooks_find_enabled_parent |
 | 细则 15.2 | 通过 | 2 个测试：test_record_hook_filters、test_append_ids_and_lock |
 | 细则 15.3 | 通过 | 2 个测试：test_preprocess、test_consolidation_input_skips_dropped |
-| 细则 15.4 | 通过 | 4 个测试：test_accumulation_mode、test_consolidation_ok、test_consolidation_errors、test_consolidation_input_skips_dropped |
+| 细则 15.4 | 通过 | 7 个测试：test_a_ledger_over_the_limit_stops_without_a_model_call、test_accumulation_mode、test_consolidation_ok、test_consolidation_errors 等 |
 | 细则 15.5 | 通过 | 1 个测试：test_turn_and_session_triggers |
 | 细则 15.6 | 通过 | 1 个测试：test_new_ledger |
 | 细则 16.1 | 通过 | 1 个测试：test_turn_and_session_triggers |
@@ -147,9 +147,9 @@
 | I-AG-1 | 通过 | 两个配置都有 name、display_name、description、instructions，sub_agent_only: true |
 | I-AG-2 | 通过 | cv-subtask：builtins 为空，skills 不自动加载，没有 memory |
 | I-AG-3 | 通过 | cv-align builtins：['filesystem.read', 'filesystem.write', 'search', 'shell'] |
-| I-HK-1 | 通过 | 7 个 hook：cv-record、cv-turn、cv-session-end、cv-subtask-guard、cv-history-guard-path、cv-history-guard-command、cv-history-guard-workdir |
+| I-HK-1 | 通过 | 8 个 hook：cv-record、cv-turn、cv-session-end、cv-compact、cv-subtask-guard、cv-history-guard-path、cv-history-guard-command、cv-history-guard-workdir |
 | I-HK-2 | 通过 | cv_cli.hook 从 CHRYS_HOOK_PAYLOAD_FILE 读输入，向 CHRYS_HOOK_RESULT 写决定 |
-| I-HK-3 | 通过 | PASS 1 file · 7 hooks |
+| I-HK-3 | 通过 | PASS 1 file · 8 hooks |
 | I-WF-1 | 通过 | cross-validate/cross-validate.py 顶层只有导入、函数定义、赋值和构图调用，并定义 workflow |
 | I-WF-2 | 通过 | 与标准库同名：无；相对导入或第三方导入：无 |
 | I-WF-3 | 通过 | 1 个测试：test_graph_builds |
@@ -162,8 +162,8 @@
 | --- | --- | --- |
 | P-1 | 通过 | 只导入标准库 |
 | P-2 | 通过 | ruff target-version = py310，workflow 声明 requires-python >=3.10 |
-| P-3 | 通过 | ruff check：All checks passed!；ruff format：74 files already formatted |
-| P-4 | 通过 | 插件本体 381 KB；含 iCode 版权声明的文件：无 |
-| P-5 | 通过 | pytest：297 passed in 227.64s (0:03:47) |
-| P-6 | 通过 | 重建以来 49 个提交 |
+| P-3 | 通过 | ruff check：All checks passed!；ruff format：76 files already formatted |
+| P-4 | 通过 | 插件本体 398 KB；含 iCode 版权声明的文件：无 |
+| P-5 | 通过 | pytest：323 passed in 254.71s (0:04:14) |
+| P-6 | 通过 | 重建以来 77 个提交 |
 | P-7 | 通过 | 含令牌或密钥的文件：无 |

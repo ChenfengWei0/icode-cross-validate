@@ -128,3 +128,84 @@ def test_empty_trace(decls):
     """细则 12.6 an empty trace is an alignment failure."""
     with pytest.raises(M.AlignError, match="轨迹为空"):
         judge(R5, [], decls)
+
+
+@pytest.mark.parametrize(
+    "formula",
+    [
+        "∀x:点 G(P(x))",
+        "G(∀x:点 P(x) → Q(x))",
+        "∀x:点 ∃y:点 G(R(x, y))",
+        "F(∃x:点 Q(x))",
+        "∃!x:点 P(x)",
+        "G(¬(∃x:点 P(x) ∧ Q(x)))",
+        "∀x:点 X(P(x))",
+    ],
+)
+def test_settling_at_the_end_gives_the_same_verdict(formula):
+    """细则 11.12 with end_final: the obligations are settled at the last state; presumed results become final
+    either way, so the verdict is the one judge gives without it."""
+    d = F.Decls()
+    d.category["点"], d.params["点"] = "实体", []
+    for name, params in (("P", ["点"]), ("Q", ["点"]), ("R", ["点", "点"])):
+        d.category[name], d.params[name] = "谓词", params
+    tree = F.parse(formula, d)
+    final = {M.PRESUMED_TRUE: M.SATISFIED, M.PRESUMED_FALSE: M.VIOLATED}
+    vals = {"P(1)": True, "P(2)": False, "Q(1)": True, "Q(2)": True, "R(1,1)": False, "R(1,2)": True,
+            "R(2,1)": True, "R(2,2)": False}  # fmt: skip
+    for states in ([{"实体": {"点": [1, 2]}, "值": vals}],
+                   [{"实体": {"点": [1, 2]}, "值": vals}, {"实体": {"点": [1]}, "值": vals}]):  # fmt: skip
+        a = M.judge(tree, states, {"点"})["result"]
+        b = M.judge(tree, states, {"点"}, end_final=True)["result"]
+        assert final.get(a, a) == final.get(b, b)
+
+
+def _decls(**cats):
+    d = F.Decls()
+    for name, (cat, params) in cats.items():
+        d.category[name], d.params[name] = cat, params
+    return d
+
+
+def test_a_never_listed_entity_has_its_one_individual_under_a_quantifier():
+    """细则 12.4: an entity never listed has one individual, named by the entity, also for ∀x:T."""
+    d = _decls(图=("实体", []), 用例=("实体", []), 有解=("谓词", ["图"]), 输出有解=("谓词", ["图"]))
+    tree = F.parse("G(∀g:图 有解(g) → 输出有解(g))", d)
+    states = [{"实体": {"用例": [1]}, "值": {"有解(图)": True, "输出有解(图)": False}}]
+    assert M.judge(tree, states, {"图", "用例"}, end_final=True)["result"] == M.VIOLATED
+
+
+def test_exactly_one_counts_each_number_once():
+    """细则 12.4: a number listed under two entities is one individual for an untyped quantifier."""
+    d = _decls(矩阵=("实体", []), 子矩阵=("实体", []))
+    tree = F.parse("G(∃!x 矩阵(x))", d)
+    states = [{"实体": {"子矩阵": [1, 2, 3], "矩阵": [1]}, "值": {}}]
+    assert M.judge(tree, states, {"矩阵", "子矩阵"}, end_final=True)["result"] == M.SATISFIED
+
+
+def test_a_string_individual_is_the_number_a_module_lists():
+    """细则 12.4: 「1」 in a proposition and 1 in 实体 are one individual."""
+    d = _decls(下标=("实体", []), 取值=("数量", ["下标"]))
+    states = [{"实体": {"下标": [1, 2]}, "值": {"取值(1)": 5, "取值(2)": 7}}]
+    assert M.judge(F.parse("G(取值(「1」) = 5)", d), states, {"下标"}, end_final=True)["result"] == M.SATISFIED
+    assert M.judge(F.parse("G(取值(「1」) ≠ 5)", d), states, {"下标"}, end_final=True)["result"] == M.VIOLATED
+
+
+def test_an_entity_name_key_follows_the_name_the_module_wrote():
+    """细则 12.4: 行数(矩阵) is found when another entity has the same only individual."""
+    d = _decls(矩阵=("实体", []), 子矩阵=("实体", []), 行数=("数量", ["矩阵"]))
+    states = [{"实体": {"子矩阵": [1], "矩阵": [1]}, "值": {"行数(矩阵)": 3}}]
+    assert M.judge(F.parse("G(行数(矩阵) = 3)", d), states, {"矩阵", "子矩阵"}, end_final=True)["result"] == M.SATISFIED
+
+
+def test_order_comparisons_use_the_tolerance():
+    """细则 11.12 结果: within the tolerance two numbers are equal, so ≥ holds and > does not."""
+    d = _decls(输出值=("数量", []), 最优值=("数量", []))
+    states = [{"值": {"输出值": 0.333333, "最优值": 1 / 3}}]
+    assert (
+        M.judge(F.parse("G(输出值 ≥ 最优值)", d), states, set(), tolerance=1e-5, end_final=True)["result"]
+        == M.SATISFIED
+    )
+    assert (
+        M.judge(F.parse("G(输出值 < 最优值)", d), states, set(), tolerance=1e-5, end_final=True)["result"] == M.VIOLATED
+    )
