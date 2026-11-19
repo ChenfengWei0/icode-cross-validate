@@ -163,7 +163,7 @@
 | P-1 | 通过 | 只导入标准库 |
 | P-2 | 通过 | ruff target-version = py310，workflow 声明 requires-python >=3.10 |
 | P-3 | 通过 | ruff check：All checks passed!；ruff format：76 files already formatted |
-| P-4 | 通过 | 插件本体 398 KB；含 iCode 版权声明的文件：无 |
-| P-5 | 通过 | pytest：323 passed in 254.71s (0:04:14) |
-| P-6 | 通过 | 重建以来 77 个提交 |
+| P-4 | 通过 | 插件本体 399 KB；含 iCode 版权声明的文件：无 |
+| P-5 | 通过 | pytest：323 passed in 240.44s (0:04:00) |
+| P-6 | 通过 | 重建以来 80 个提交 |
 | P-7 | 通过 | 含令牌或密钥的文件：无 |

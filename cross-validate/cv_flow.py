@@ -932,11 +932,29 @@ def io_align_check(state: dict, answer: str | None, attempt: int, config: dict) 
             )
         finally:
             module.close()
+    seeing = any(kills.get(pid) and p["class"] != "结构" for pid, p in props.items() if pid not in excluded)
+    if not failures and not seeing and attempt == 1 and code is not None and props:  # 细则 11.12 变异对照之后的改正
+        shown = "\n".join(
+            f"- 示例 {i} 的输出改成 {json.dumps(m, ensure_ascii=False)}"
+            for i, (_a, b) in enumerate(report["examples"], 1)
+            for m in IO.mutants(b, [], int(cfg["mutants"]))[:4]
+        )
+        return state, prompt(
+            "io_align_fix",
+            ORIGINAL=io_align_prompt(state) or "",
+            PREVIOUS=code,
+            PROBLEMS=(
+                "变异对照：把示例的输出改错之后，所有命题仍然成立，没有一条命题拦下错误的输出，"
+                "说明检查没有在看程序的输出。最常见的原因是程序要输出的量（答案）也由 derive 从输入算出，"
+                "trace 只检查了格式：程序输出的答案必须由 trace 从输出中读出，derive 只算由输入决定、"
+                "用来与答案比较的量。用到的变异输出：\n" + shown
+            ),
+        )
     S.write_json(align / IO.INPUTS, inputs)
     usable = (
         not failures
         and generated - pre_dropped >= float(cfg["min_kept"]) * generated  # 细则 11.12 输入预检
-        and any(kills.get(pid) and p["class"] != "结构" for pid, p in props.items() if pid not in excluded)
+        and seeing
     )
     frozen = {
         "kind": "io",
